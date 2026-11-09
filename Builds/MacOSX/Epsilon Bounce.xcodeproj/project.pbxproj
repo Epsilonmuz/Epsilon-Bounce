@@ -66,6 +66,7 @@
 		6170DE69564E88681B9CA5EE /* IOKit.framework */ = {isa = PBXBuildFile; fileRef = 804007D5B6D3559BC14B4758; };
 		64FDB0319DD3B9A29042D94B /* include_juce_graphics_libwebp_dec.c */ = {isa = PBXBuildFile; fileRef = 9CC4EBFC0FA37A17249E4B79; };
 		66C27EB8B83DA180DDDE2DCE /* Metal.framework */ = {isa = PBXBuildFile; fileRef = 0053511B14B3BEF4213BBEBE; settings = { ATTRIBUTES = (Weak, ); }; };
+		67104E75E35753D90A3A3DA9 /* AppIcon.icns */ = {isa = PBXBuildFile; fileRef = B67CCAA208E315A72E810AF6; };
 		674F9C1A4C0526FBB5C721D3 /* include_juce_audio_formats_opusfile.c */ = {isa = PBXBuildFile; fileRef = A6E3AB961E003324F5247B25; };
 		6902E3607B647526006B3C7B /* Metal.framework */ = {isa = PBXBuildFile; fileRef = 0053511B14B3BEF4213BBEBE; settings = { ATTRIBUTES = (Weak, ); }; };
 		6CB2C11ADB3908161EB376A7 /* QuartzCore.framework */ = {isa = PBXBuildFile; fileRef = 73C0A0E5AF5191D82D438C3F; };
@@ -149,10 +150,12 @@
 		05BB4D8CAFF1D5DFC162534B /* include_juce_gui_extra.mm */ /* include_juce_gui_extra.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_gui_extra.mm; path = ../../JuceLibraryCode/include_juce_gui_extra.mm; sourceTree = SOURCE_ROOT; };
 		0BEDEB06C79E086A840F36A4 /* Foundation.framework */ /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		0BF44D5419B248BC70AF78D5 /* juce_audio_processors */ /* juce_audio_processors */ = {isa = PBXFileReference; lastKnownFileType = folder; name = juce_audio_processors; path = ../../JUCE/modules/juce_audio_processors; sourceTree = SOURCE_ROOT; };
+		11ECE16AB5366327E4E95332 /* EpsilonControls.h */ /* EpsilonControls.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = EpsilonControls.h; path = ../../Shared/epsilon_ui/EpsilonControls.h; sourceTree = SOURCE_ROOT; };
 		13A41B68BC30208B4CFD11FF /* include_juce_audio_formats_opus.c */ /* include_juce_audio_formats_opus.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_audio_formats_opus.c; path = ../../JuceLibraryCode/include_juce_audio_formats_opus.c; sourceTree = SOURCE_ROOT; };
 		166C43CCCA72D84A27C48AE3 /* include_juce_graphics_libpng.c */ /* include_juce_graphics_libpng.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_graphics_libpng.c; path = ../../JuceLibraryCode/include_juce_graphics_libpng.c; sourceTree = SOURCE_ROOT; };
 		16AD613910BAF07A645CFF70 /* include_juce_audio_formats_ogg.c */ /* include_juce_audio_formats_ogg.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_audio_formats_ogg.c; path = ../../JuceLibraryCode/include_juce_audio_formats_ogg.c; sourceTree = SOURCE_ROOT; };
 		17B76527E73B3B8D9CA4D30B /* CoreMIDI.framework */ /* CoreMIDI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMIDI.framework; path = System/Library/Frameworks/CoreMIDI.framework; sourceTree = SDKROOT; };
+		181382E9523203ECBD249E90 /* EpsilonDial-LICENSE.txt */ /* EpsilonDial-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text.txt; name = "EpsilonDial-LICENSE.txt"; path = "../../Resources/EpsilonDial-LICENSE.txt"; sourceTree = SOURCE_ROOT; };
 		1B7CA39AB193B9E7B5214571 /* include_juce_audio_plugin_client_Standalone.cpp */ /* include_juce_audio_plugin_client_Standalone.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = include_juce_audio_plugin_client_Standalone.cpp; path = ../../JuceLibraryCode/include_juce_audio_plugin_client_Standalone.cpp; sourceTree = SOURCE_ROOT; };
 		1E0286F5147FCC612ED3A7D8 /* Accelerate.framework */ /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
 		1F7BF1C991547098F8D49389 /* juce_VST3ManifestHelper.cpp */ /* juce_VST3ManifestHelper.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = juce_VST3ManifestHelper.cpp; path = ../../JUCE/modules/juce_audio_plugin_client/VST3/juce_VST3ManifestHelper.cpp; sourceTree = SOURCE_ROOT; };
@@ -163,10 +166,10 @@
 		25D0D7282C8E36068EB263C9 /* include_juce_graphics_libwebp_enc.c */ /* include_juce_graphics_libwebp_enc.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_graphics_libwebp_enc.c; path = ../../JuceLibraryCode/include_juce_graphics_libwebp_enc.c; sourceTree = SOURCE_ROOT; };
 		272CC7700548FC21131AA9BE /* EpsilonUI.h */ /* EpsilonUI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = EpsilonUI.h; path = ../../Shared/epsilon_ui/EpsilonUI.h; sourceTree = SOURCE_ROOT; };
 		27FCE69461CB73871AD066FD /* include_juce_audio_processors.mm */ /* include_juce_audio_processors.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_audio_processors.mm; path = ../../JuceLibraryCode/include_juce_audio_processors.mm; sourceTree = SOURCE_ROOT; };
+		2903558750FC7F9C380BBA86 /* EpsilonDial-Regular.ttf */ /* EpsilonDial-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "EpsilonDial-Regular.ttf"; path = "../../Resources/EpsilonDial-Regular.ttf"; sourceTree = SOURCE_ROOT; };
 		2BC9FBA5766CE69253041A6F /* include_juce_core_CompilationTime.cpp */ /* include_juce_core_CompilationTime.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = include_juce_core_CompilationTime.cpp; path = ../../JuceLibraryCode/include_juce_core_CompilationTime.cpp; sourceTree = SOURCE_ROOT; };
 		2E1AC2E3EEC7E3EB00F20E16 /* include_juce_events.mm */ /* include_juce_events.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_events.mm; path = ../../JuceLibraryCode/include_juce_events.mm; sourceTree = SOURCE_ROOT; };
 		2EC179E5208C2DDDF2EA63DC /* juce_graphics */ /* juce_graphics */ = {isa = PBXFileReference; lastKnownFileType = folder; name = juce_graphics; path = ../../JUCE/modules/juce_graphics; sourceTree = SOURCE_ROOT; };
-		353BBC66B5613D6B9DFF9A16 /* BarlowSemiCondensed-SemiBold.ttf */ /* BarlowSemiCondensed-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "BarlowSemiCondensed-SemiBold.ttf"; path = "../../Resources/BarlowSemiCondensed-SemiBold.ttf"; sourceTree = SOURCE_ROOT; };
 		36E09919394D5A99E12A1B87 /* BounceEngine.h */ /* BounceEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = BounceEngine.h; path = ../../Source/BounceEngine.h; sourceTree = SOURCE_ROOT; };
 		37AB4BCAE116F408DC02BECB /* include_juce_graphics_lunasvg.c */ /* include_juce_graphics_lunasvg.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_graphics_lunasvg.c; path = ../../JuceLibraryCode/include_juce_graphics_lunasvg.c; sourceTree = SOURCE_ROOT; };
 		3926CE47E16F47E45E02C7B0 /* include_juce_audio_utils.mm */ /* include_juce_audio_utils.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_audio_utils.mm; path = ../../JuceLibraryCode/include_juce_audio_utils.mm; sourceTree = SOURCE_ROOT; };
@@ -207,18 +210,18 @@
 		9151C931B76E37C63C89F2B8 /* AU */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Epsilon Bounce.component"; sourceTree = BUILT_PRODUCTS_DIR; };
 		97771A147267DA508739808D /* PluginEditor.cpp */ /* PluginEditor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = PluginEditor.cpp; path = ../../Source/PluginEditor.cpp; sourceTree = SOURCE_ROOT; };
 		9CC4EBFC0FA37A17249E4B79 /* include_juce_graphics_libwebp_dec.c */ /* include_juce_graphics_libwebp_dec.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_graphics_libwebp_dec.c; path = ../../JuceLibraryCode/include_juce_graphics_libwebp_dec.c; sourceTree = SOURCE_ROOT; };
-		9D24BD00D18282EA080EEB38 /* Barlow-OFL.txt */ /* Barlow-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text.txt; name = "Barlow-OFL.txt"; path = "../../Resources/Barlow-OFL.txt"; sourceTree = SOURCE_ROOT; };
 		9DC7FFD277E4DE0BF5FC90A4 /* CoreAudio.framework */ /* CoreAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = System/Library/Frameworks/CoreAudio.framework; sourceTree = SDKROOT; };
 		A6E3AB961E003324F5247B25 /* include_juce_audio_formats_opusfile.c */ /* include_juce_audio_formats_opusfile.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_audio_formats_opusfile.c; path = ../../JuceLibraryCode/include_juce_audio_formats_opusfile.c; sourceTree = SOURCE_ROOT; };
 		A7B40467E50D2C43CCD9D5CA /* juce_events */ /* juce_events */ = {isa = PBXFileReference; lastKnownFileType = folder; name = juce_events; path = ../../JUCE/modules/juce_events; sourceTree = SOURCE_ROOT; };
-		A7BEEFA8F3548254A1D599DA /* BarlowSemiCondensed-Medium.ttf */ /* BarlowSemiCondensed-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "BarlowSemiCondensed-Medium.ttf"; path = "../../Resources/BarlowSemiCondensed-Medium.ttf"; sourceTree = SOURCE_ROOT; };
 		AD3E313A9D144EB994703FC3 /* juce_gui_basics */ /* juce_gui_basics */ = {isa = PBXFileReference; lastKnownFileType = folder; name = juce_gui_basics; path = ../../JUCE/modules/juce_gui_basics; sourceTree = SOURCE_ROOT; };
 		B412A463CFCB7CF8C7F4A878 /* VST3 */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Epsilon Bounce.vst3"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B67CCAA208E315A72E810AF6 /* AppIcon.icns */ /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = file.icns; name = AppIcon.icns; path = AppIcon.icns; sourceTree = SOURCE_ROOT; };
 		B6C52F0C04CEFED0B4E147DA /* Info-Standalone_Plugin.plist */ /* Info-Standalone_Plugin.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "Info-Standalone_Plugin.plist"; path = "Info-Standalone_Plugin.plist"; sourceTree = SOURCE_ROOT; };
 		BB9DE05AA227021D17D1C0FE /* Presets.h */ /* Presets.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = Presets.h; path = ../../Source/Presets.h; sourceTree = SOURCE_ROOT; };
 		BD3EC2766F85FB8109AA0966 /* JucePluginDefines.h */ /* JucePluginDefines.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = JucePluginDefines.h; path = ../../JuceLibraryCode/JucePluginDefines.h; sourceTree = SOURCE_ROOT; };
 		BD53F3BB2572E4FB257E3765 /* include_juce_graphics_libjpg_1.c */ /* include_juce_graphics_libjpg_1.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_graphics_libjpg_1.c; path = ../../JuceLibraryCode/include_juce_graphics_libjpg_1.c; sourceTree = SOURCE_ROOT; };
 		BDB5EBFD3EA35CF442F3B31E /* include_juce_audio_processors_headless_ara.cpp */ /* include_juce_audio_processors_headless_ara.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = include_juce_audio_processors_headless_ara.cpp; path = ../../JuceLibraryCode/include_juce_audio_processors_headless_ara.cpp; sourceTree = SOURCE_ROOT; };
+		C403D0CB600F239E2A1F4EC0 /* AppIcon.png */ /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = AppIcon.png; path = ../../Resources/AppIcon.png; sourceTree = SOURCE_ROOT; };
 		C7C8C65FDCBE812787E1D4A0 /* Shared Code */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libEpsilon Bounce.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C824E09A404072E6F6511F50 /* include_juce_audio_basics.mm */ /* include_juce_audio_basics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_audio_basics.mm; path = ../../JuceLibraryCode/include_juce_audio_basics.mm; sourceTree = SOURCE_ROOT; };
 		C8BFE9665A3DBCB1A73CF26F /* include_juce_audio_devices.mm */ /* include_juce_audio_devices.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_audio_devices.mm; path = ../../JuceLibraryCode/include_juce_audio_devices.mm; sourceTree = SOURCE_ROOT; };
@@ -234,11 +237,11 @@
 		DF1705C2AB7708331B4A5C8C /* include_juce_graphics_libwebp_sharpyuv.c */ /* include_juce_graphics_libwebp_sharpyuv.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = include_juce_graphics_libwebp_sharpyuv.c; path = ../../JuceLibraryCode/include_juce_graphics_libwebp_sharpyuv.c; sourceTree = SOURCE_ROOT; };
 		DF5845B6CB9AFF7F416DDDA1 /* EpsilonPalette.h */ /* EpsilonPalette.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = EpsilonPalette.h; path = ../../Shared/epsilon_ui/EpsilonPalette.h; sourceTree = SOURCE_ROOT; };
 		DFBED54A39C386FB44552DE7 /* include_juce_audio_plugin_client_AU_1.mm */ /* include_juce_audio_plugin_client_AU_1.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_audio_plugin_client_AU_1.mm; path = ../../JuceLibraryCode/include_juce_audio_plugin_client_AU_1.mm; sourceTree = SOURCE_ROOT; };
-		E83CD9561E187326803230AC /* BarlowSemiCondensed-Bold.ttf */ /* BarlowSemiCondensed-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "BarlowSemiCondensed-Bold.ttf"; path = "../../Resources/BarlowSemiCondensed-Bold.ttf"; sourceTree = SOURCE_ROOT; };
 		EDA8D308335EA755DE268248 /* include_juce_audio_plugin_client_ARA.cpp */ /* include_juce_audio_plugin_client_ARA.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = include_juce_audio_plugin_client_ARA.cpp; path = ../../JuceLibraryCode/include_juce_audio_plugin_client_ARA.cpp; sourceTree = SOURCE_ROOT; };
 		EFA9C8ADDE253A78E35EF40A /* include_juce_audio_processors_headless.mm */ /* include_juce_audio_processors_headless.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_audio_processors_headless.mm; path = ../../JuceLibraryCode/include_juce_audio_processors_headless.mm; sourceTree = SOURCE_ROOT; };
 		EFE7996558BE9C3441ACCE07 /* Standalone Plugin */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Epsilon Bounce.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		F0ED58939E7EB6123B181D86 /* MetalKit.framework */ /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		F5413802E52F5EBFAF234CE4 /* EpsilonDial-Bold.ttf */ /* EpsilonDial-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "EpsilonDial-Bold.ttf"; path = "../../Resources/EpsilonDial-Bold.ttf"; sourceTree = SOURCE_ROOT; };
 		F5F724CF404CFCCF1FBC9BB0 /* include_juce_graphics.mm */ /* include_juce_graphics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_graphics.mm; path = ../../JuceLibraryCode/include_juce_graphics.mm; sourceTree = SOURCE_ROOT; };
 		F6CBC8DFB17E4FDE15122840 /* juce_audio_formats */ /* juce_audio_formats */ = {isa = PBXFileReference; lastKnownFileType = folder; name = juce_audio_formats; path = ../../JUCE/modules/juce_audio_formats; sourceTree = SOURCE_ROOT; };
 		F6DE53386927CA0B14486B7D /* juce_gui_extra */ /* juce_gui_extra */ = {isa = PBXFileReference; lastKnownFileType = folder; name = juce_gui_extra; path = ../../JUCE/modules/juce_gui_extra; sourceTree = SOURCE_ROOT; };
@@ -339,10 +342,10 @@
 		0416E67315B7CAA8F74C44C5 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				A7BEEFA8F3548254A1D599DA,
-				353BBC66B5613D6B9DFF9A16,
-				E83CD9561E187326803230AC,
-				9D24BD00D18282EA080EEB38,
+				2903558750FC7F9C380BBA86,
+				F5413802E52F5EBFAF234CE4,
+				C403D0CB600F239E2A1F4EC0,
+				181382E9523203ECBD249E90,
 			);
 			name = Resources;
 			sourceTree = "<group>";
@@ -468,6 +471,7 @@
 				272CC7700548FC21131AA9BE,
 				DF5845B6CB9AFF7F416DDDA1,
 				22738E2FC66F25C8E5CB8571,
+				11ECE16AB5366327E4E95332,
 			);
 			name = "epsilon_ui (shared look)";
 			sourceTree = "<group>";
@@ -493,6 +497,7 @@
 				B6C52F0C04CEFED0B4E147DA,
 				757E839FEC209731017DC811,
 				822EE0C0ECE63568FEB2C581,
+				B67CCAA208E315A72E810AF6,
 			);
 			name = Resources;
 			sourceTree = "<group>";
@@ -784,6 +789,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3B41406EE17D4DBB1C01165A,
+				67104E75E35753D90A3A3DA9,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -792,6 +798,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3B41406EE17D4DBB1C01165A,
+				67104E75E35753D90A3A3DA9,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -800,6 +807,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3B41406EE17D4DBB1C01165A,
+				67104E75E35753D90A3A3DA9,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1074,9 +1082,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -1101,12 +1109,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
 				GENERATE_PKGINFO_FILE = YES;
@@ -1197,9 +1205,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -1224,12 +1232,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
 				GENERATE_PKGINFO_FILE = YES;
@@ -1326,9 +1334,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -1353,12 +1361,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
 				HEADER_SEARCH_PATHS = (
@@ -1498,9 +1506,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -1525,12 +1533,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 					"JUCE_SHARED_CODE=1",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
@@ -1618,9 +1626,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -1645,12 +1653,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
 				GENERATE_PKGINFO_FILE = YES;
@@ -1741,9 +1749,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -1768,12 +1776,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
 				HEADER_SEARCH_PATHS = (
@@ -1913,9 +1921,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -1940,12 +1948,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
 				HEADER_SEARCH_PATHS = (
@@ -2033,9 +2041,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -2060,12 +2068,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 					"JUCE_SHARED_CODE=1",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
@@ -2159,9 +2167,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -2186,12 +2194,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
 				GENERATE_PKGINFO_FILE = YES;
@@ -2284,9 +2292,9 @@
 					"JucePlugin_ProducesMidiOutput=0",
 					"JucePlugin_IsMidiEffect=0",
 					"JucePlugin_EditorRequiresKeyboardFocus=0",
-					"JucePlugin_Version=1.2.0",
-					"JucePlugin_VersionCode=0x10200",
-					"JucePlugin_VersionString=\\\"1.2.0\\\"",
+					"JucePlugin_Version=1.3.0",
+					"JucePlugin_VersionCode=0x10300",
+					"JucePlugin_VersionString=\\\"1.3.0\\\"",
 					"JucePlugin_VSTUniqueID=JucePlugin_PluginCode",
 					"JucePlugin_VSTCategory=kPlugCategSynth",
 					"JucePlugin_LV2PluginClass=InstrumentPlugin",
@@ -2311,12 +2319,12 @@
 					"JucePlugin_ARAContentTypes=0",
 					"JucePlugin_ARATransformationFlags=0",
 					"JucePlugin_ARAFactoryID=\\\"com.EpsilonSounds.EpsilonBounce.factory\\\"",
-					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.2.0\\\"",
+					"JucePlugin_ARADocumentArchiveID=\\\"com.EpsilonSounds.EpsilonBounce.aradocumentarchive.1.3.0\\\"",
 					"JucePlugin_ARACompatibleArchiveIDs=\\\"\\\"",
 					"JUCE_STANDALONE_APPLICATION=JucePlugin_Build_Standalone",
 					"JUCER_XCODE_MAC_F6D2F4CF=1",
-					"JUCE_APP_VERSION=1.2.0",
-					"JUCE_APP_VERSION_HEX=0x10200",
+					"JUCE_APP_VERSION=1.3.0",
+					"JUCE_APP_VERSION_HEX=0x10300",
 				);
 				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
 				HEADER_SEARCH_PATHS = (

@@ -5,8 +5,8 @@
 // (main line, graphite + platinum). Everything else — layout, controls, the "live" champagne,
 // meters — is shared.
 //
-// Fonts: Barlow Semi Condensed 500/600/700 from the plugin's BinaryData
-// (BarlowSemiCondensedMedium_ttf, BarlowSemiCondensedSemiBold_ttf, BarlowSemiCondensedBold_ttf).
+// Fonts: Epsilon Dial Regular/Bold (the house typeface) from the plugin's BinaryData
+// (EpsilonDialRegular_ttf, EpsilonDialBold_ttf). Medium maps to Regular; SemiBold and Bold to Bold.
 // Brand art (hallmark + wordmarks) lives in EpsilonBrandArt.h as SVG paths.
 //
 // Performance (Intel Mac rule): static chrome is painted into a cached image once per size;
@@ -25,12 +25,9 @@ enum class Weight { Medium, SemiBold, Bold };
 
 inline juce::Font font(Weight w, float height)
 {
-    static juce::Typeface::Ptr faces[3] = {
-        juce::Typeface::createSystemTypefaceFor(BinaryData::BarlowSemiCondensedMedium_ttf, BinaryData::BarlowSemiCondensedMedium_ttfSize),
-        juce::Typeface::createSystemTypefaceFor(BinaryData::BarlowSemiCondensedSemiBold_ttf, BinaryData::BarlowSemiCondensedSemiBold_ttfSize),
-        juce::Typeface::createSystemTypefaceFor(BinaryData::BarlowSemiCondensedBold_ttf, BinaryData::BarlowSemiCondensedBold_ttfSize),
-    };
-    return juce::Font(juce::FontOptions(faces[(int) w]).withHeight(height));
+    static juce::Typeface::Ptr regular = juce::Typeface::createSystemTypefaceFor(BinaryData::EpsilonDialRegular_ttf, BinaryData::EpsilonDialRegular_ttfSize);
+    static juce::Typeface::Ptr bold    = juce::Typeface::createSystemTypefaceFor(BinaryData::EpsilonDialBold_ttf, BinaryData::EpsilonDialBold_ttfSize);
+    return juce::Font(juce::FontOptions(w == Weight::Medium ? regular : bold).withHeight(height));
 }
 // Type styles (tokens.json): section-label, control-label, value, value-hero, body, caption
 inline juce::Font sectionLabel() { return font(Weight::Bold, 11.0f).withExtraKerningFactor(0.14f); }

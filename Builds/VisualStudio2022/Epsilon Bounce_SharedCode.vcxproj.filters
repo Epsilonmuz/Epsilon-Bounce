@@ -4908,6 +4908,9 @@
     <ClInclude Include="..\..\Shared\epsilon_ui\EpsilonBrandArt.h">
       <Filter>Epsilon Bounce\epsilon_ui (shared look)</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\Shared\epsilon_ui\EpsilonControls.h">
+      <Filter>Epsilon Bounce\epsilon_ui (shared look)</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\JUCE\modules\juce_audio_basics\audio_play_head\juce_AudioPlayHead.h">
       <Filter>JUCE Modules\juce_audio_basics\audio_play_head</Filter>
     </ClInclude>
@@ -9590,16 +9593,16 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\Resources\BarlowSemiCondensed-Medium.ttf">
+    <None Include="..\..\Resources\EpsilonDial-Regular.ttf">
       <Filter>Epsilon Bounce\Resources</Filter>
     </None>
-    <None Include="..\..\Resources\BarlowSemiCondensed-SemiBold.ttf">
+    <None Include="..\..\Resources\EpsilonDial-Bold.ttf">
       <Filter>Epsilon Bounce\Resources</Filter>
     </None>
-    <None Include="..\..\Resources\BarlowSemiCondensed-Bold.ttf">
+    <None Include="..\..\Resources\AppIcon.png">
       <Filter>Epsilon Bounce\Resources</Filter>
     </None>
-    <None Include="..\..\Resources\Barlow-OFL.txt">
+    <None Include="..\..\Resources\EpsilonDial-LICENSE.txt">
       <Filter>Epsilon Bounce\Resources</Filter>
     </None>
     <None Include="..\..\JUCE\modules\juce_audio_devices\native\asio\LICENSE.txt">
@@ -9727,6 +9730,9 @@
     </None>
     <None Include="..\..\JUCE\modules\juce_gui_extra\native\typescript\webview-interop\README.md">
       <Filter>JUCE Modules\juce_gui_extra\native\typescript\webview-interop</Filter>
+    </None>
+    <None Include=".\icon.ico">
+      <Filter>JUCE Library Code</Filter>
     </None>
   </ItemGroup>
 </Project>

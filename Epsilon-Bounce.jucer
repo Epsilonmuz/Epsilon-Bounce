@@ -1,39 +1,47 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="EBnc01" name="Epsilon Bounce" projectType="audioplug" version="1.2.0" bigIcon="EBf013"
+<JUCERPROJECT id="EBnc01" name="Epsilon Bounce" projectType="audioplug" version="1.3.0"
               companyName="Epsilon Sounds" bundleIdentifier="com.epsilonsounds.bounce"
               pluginName="Epsilon Bounce" pluginDesc="Re-grooves audio loops to dembow, drill and trap pockets"
               pluginManufacturer="Epsilon Sounds" pluginManufacturerCode="EpsS"
               pluginCode="EpBn" pluginFormats="buildVST3,buildAU,buildStandalone"
               pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn"
               pluginVST3Category="Instrument|Sampler" pluginAUMainType="'aumu'"
-              cppLanguageStandard="17" useAppConfig="0"
-              addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1">
+              cppLanguageStandard="17" useAppConfig="0" addUsingNamespaceToJuceHeader="0"
+              jucerFormatVersion="1">
   <MAINGROUP id="EBmain" name="Epsilon Bounce">
     <GROUP id="EBg0" name="Source">
       <FILE id="EBf000" name="BounceEngine.h" compile="0" resource="0" file="Source/BounceEngine.h"/>
       <FILE id="EBf100" name="Presets.h" compile="0" resource="0" file="Source/Presets.h"/>
-      <FILE id="EBf001" name="PluginProcessor.cpp" compile="1" resource="0" file="Source/PluginProcessor.cpp"/>
-      <FILE id="EBf002" name="PluginProcessor.h" compile="0" resource="0" file="Source/PluginProcessor.h"/>
-      <FILE id="EBf003" name="PluginEditor.cpp" compile="1" resource="0" file="Source/PluginEditor.cpp"/>
+      <FILE id="EBf001" name="PluginProcessor.cpp" compile="1" resource="0"
+            file="Source/PluginProcessor.cpp"/>
+      <FILE id="EBf002" name="PluginProcessor.h" compile="0" resource="0"
+            file="Source/PluginProcessor.h"/>
+      <FILE id="EBf003" name="PluginEditor.cpp" compile="1" resource="0"
+            file="Source/PluginEditor.cpp"/>
       <FILE id="EBf004" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
     </GROUP>
     <GROUP id="EBg1" name="epsilon_ui (shared look)">
       <FILE id="EBf005" name="EpsilonUI.h" compile="0" resource="0" file="Shared/epsilon_ui/EpsilonUI.h"/>
-      <FILE id="EBf006" name="EpsilonPalette.h" compile="0" resource="0" file="Shared/epsilon_ui/EpsilonPalette.h"/>
-      <FILE id="EBf007" name="EpsilonBrandArt.h" compile="0" resource="0" file="Shared/epsilon_ui/EpsilonBrandArt.h"/>
-      <FILE id="EBf012" name="EpsilonControls.h" compile="0" resource="0" file="Shared/epsilon_ui/EpsilonControls.h"/>
+      <FILE id="EBf006" name="EpsilonPalette.h" compile="0" resource="0"
+            file="Shared/epsilon_ui/EpsilonPalette.h"/>
+      <FILE id="EBf007" name="EpsilonBrandArt.h" compile="0" resource="0"
+            file="Shared/epsilon_ui/EpsilonBrandArt.h"/>
+      <FILE id="EBf012" name="EpsilonControls.h" compile="0" resource="0"
+            file="Shared/epsilon_ui/EpsilonControls.h"/>
     </GROUP>
     <GROUP id="EBg2" name="Resources">
-      <FILE id="EBf008" name="BarlowSemiCondensed-Medium.ttf" compile="0" resource="1" file="Resources/BarlowSemiCondensed-Medium.ttf"/>
-      <FILE id="EBf009" name="BarlowSemiCondensed-SemiBold.ttf" compile="0" resource="1" file="Resources/BarlowSemiCondensed-SemiBold.ttf"/>
-      <FILE id="EBf010" name="BarlowSemiCondensed-Bold.ttf" compile="0" resource="1" file="Resources/BarlowSemiCondensed-Bold.ttf"/>
+      <FILE id="EBf014" name="EpsilonDial-Regular.ttf" compile="0" resource="1"
+            file="Resources/EpsilonDial-Regular.ttf"/>
+      <FILE id="EBf015" name="EpsilonDial-Bold.ttf" compile="0" resource="1"
+            file="Resources/EpsilonDial-Bold.ttf"/>
       <FILE id="EBf013" name="AppIcon.png" compile="0" resource="0" file="Resources/AppIcon.png"/>
-      <FILE id="EBf011" name="Barlow-OFL.txt" compile="0" resource="0" file="Resources/Barlow-OFL.txt"/>
+      <FILE id="EBf011" name="EpsilonDial-LICENSE.txt" compile="0" resource="0"
+            file="Resources/EpsilonDial-LICENSE.txt"/>
     </GROUP>
   </MAINGROUP>
   <EXPORTFORMATS>
-    <XCODE_MAC targetFolder="Builds/MacOSX">
+    <XCODE_MAC targetFolder="Builds/MacOSX" bigIcon="EBf013">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Bounce"
                        osxArchitecture="Native" macOSDeploymentTarget="12.0" enablePluginBinaryCopyStep="1"
@@ -59,7 +67,7 @@
         <MODULEPATH id="juce_gui_extra" path="JUCE/modules"/>
       </MODULEPATHS>
     </XCODE_MAC>
-    <VS2022 targetFolder="Builds/VisualStudio2022">
+    <VS2022 targetFolder="Builds/VisualStudio2022" bigIcon="EBf013">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Bounce"/>
         <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="Epsilon Bounce"/>
@@ -80,7 +88,7 @@
         <MODULEPATH id="juce_gui_extra" path="JUCE/modules"/>
       </MODULEPATHS>
     </VS2022>
-    <LINUX_MAKE targetFolder="Builds/LinuxMakefile">
+    <LINUX_MAKE targetFolder="Builds/LinuxMakefile" bigIcon="EBf013">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Bounce"/>
         <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="Epsilon Bounce"/>

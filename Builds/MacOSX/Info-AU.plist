@@ -6,7 +6,7 @@
     <key>CFBundleExecutable</key>
     <string>${EXECUTABLE_NAME}</string>
     <key>CFBundleIconFile</key>
-    <string></string>
+    <string>AppIcon.icns</string>
     <key>CFBundleIdentifier</key>
     <string>com.epsilonsounds.bounce</string>
     <key>CFBundleName</key>
@@ -18,9 +18,9 @@
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.2.0</string>
+    <string>1.3.0</string>
     <key>CFBundleVersion</key>
-    <string>1.2.0</string>
+    <string>1.3.0</string>
     <key>NSHumanReadableCopyright</key>
     <string></string>
     <key>NSHighResolutionCapable</key>
@@ -41,7 +41,7 @@
         <key>subtype</key>
         <string>EpBn</string>
         <key>version</key>
-        <integer>66048</integer>
+        <integer>66304</integer>
         <key>resourceUsage</key>
         <dict>
           <key>network.client</key>

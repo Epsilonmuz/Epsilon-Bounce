@@ -58,4 +58,4 @@ The loop is saved inside your session (FLAC-compressed), so projects reopen with
 
 ## Look
 
-The UI uses the shared Epsilon Sounds design system (`Shared/epsilon_ui/`): Epsilon tier (graphite + platinum), champagne only for what's live, the Hallmark logo as vector art.
+The UI uses the shared Epsilon Sounds design system (`Shared/epsilon_ui/`): Epsilon tier (graphite + platinum), champagne only for what's live, the Hallmark logo as vector art. Since 1.3 it is set in **Epsilon Dial**, the house typeface (`Resources/EpsilonDial-*.ttf`, proprietary to Epsilon Sounds), and uses the signature controls in `EpsilonControls.h`: coin-edge knobs with a floating lume tip, keycaps with a lume bar, pills with an LED jewel, and value windows. The app icon is the Bounce product symbol.
