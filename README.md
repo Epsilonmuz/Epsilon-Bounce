@@ -1,12 +1,23 @@
 # Epsilon Bounce
 
-**Re-groove any loop into 13 genre pockets, 42 presets, or the exact feel of any reference loop.** Drop an audio loop on the grid: Bounce finds every hit, slices it, and plays the slices back on your DAW's tempo with the groove you pick — so a stiff loop bounces, a straight hat pattern shuffles like UK drill, and anything you sample lands in the pocket at your project's BPM.
+**Lock any melody, flipped sample or drum loop to your drums' groove** — or to 13 genre pockets and 42 presets. Drop an audio loop on the grid: Bounce finds every hit, slices it, and plays the slices back on your DAW's tempo with the groove you pick — so a stiff loop bounces, a straight hat pattern shuffles like UK drill, and anything you sample lands in the pocket at your project's BPM.
 
 Part of the Epsilon line by **Epsilon Sounds**.
 
 **Manual:** [Epsilon Bounce Manual (PDF)](docs/Epsilon%20Bounce%20Manual.pdf) - every control drawn, all 13 pockets and 42 presets, Groove Learn, and tips. The interactive version with the playable Pocket Lab is `docs/manual.html`.
 
 ![Epsilon Bounce](docs/epsilon-bounce-editor.png)
+
+## Lock a melody to your drums
+
+A sample that doesn't sit with your beat is one of four problems; Bounce fixes each:
+
+| Problem | Fix |
+|---|---|
+| It swings differently from your drums | **Match drums** learns your drum loop's pocket; your drum hits show on the grid and the melody's notes move under them |
+| It's early / late as a whole, or starts on a pickup | **Auto-align** (corrects samples cut a few ms off) and **Shift** (bar 1 by whole 16ths) |
+| No drum-like hits to cut on | **Cut on: Melodic** (cuts where the notes / chords change) or **Grid** (even 16th / 8th / beat chops on zero crossings) |
+| Moved notes leave gaps | **Hold** sustains each piece with a seamless loop of its own tail until the next one; 8 ms crossfaded cuts |
 
 ## How it works
 
@@ -41,8 +52,8 @@ The loop is saved inside your session (FLAC-compressed), so projects reopen with
 
 ## Tests
 
-- `BounceEngineTests` — 58 checks at 44.1 and 48 kHz: onset accuracy (< 1.5 ms), every hit on the right 16th, playback timing (< 1 ms), each groove's offsets, all 13 pockets distinct and bounded, Groove Learn recovering a known swing and late snare, tempo follow, humanize stability, level bounds, silence, and speed (render < 2 % of a core, analysis < 2 s).
-- `BounceBench` (`-DBOUNCE_BUILD_BENCH=ON`) — drives the real plugin like a DAW: loads a WAV, plays it on a 140 BPM playhead, checks every groove at max, all 42 presets, half/double time, learning from a reference WAV, stopped/preview behaviour, session round-trip with the loop inside, drag-out render, and writes UI snapshots.
+- `BounceEngineTests` — 88 checks at 44.1 and 48 kHz: onset accuracy (< 1.5 ms), every hit on the right 16th, playback timing (< 1 ms), each groove's offsets, all 13 pockets distinct and bounded, Groove Learn recovering a known swing and late snare, melodic cutting finding all smooth chord changes (and not splitting a vibrato note), grid cuts on zero crossings, auto-align of a 25 ms offset, Hold filling gaps with no clicks, tempo follow, humanize stability, level bounds, silence, and speed (render < 2 % of a core, analysis < 2 s).
+- `BounceBench` (`-DBOUNCE_BUILD_BENCH=ON`) — drives the real plugin like a DAW: loads a WAV, plays it on a 140 BPM playhead, checks every groove at max, all 42 presets, half/double time, learning from a reference WAV, melodic / grid cutting and Hold through the real plugin (half-time chords: no gaps, no clicks), stopped/preview behaviour, session round-trip with the loop inside, drag-out render, and writes UI snapshots.
 - CI (`.github/workflows/build.yml`) builds universal VST3/AU/Standalone on macOS 15 and runs all of the above plus `auval` and `pluginval` at strictness 8; `perf.yml` times the engine on Intel and Apple Silicon Macs.
 
 ## Look

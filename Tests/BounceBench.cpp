@@ -318,7 +318,7 @@ int main(int argc, char** argv)
                 for (int i = 0; i < 20; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
             }
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
-            ed->setSize(960, 600);
+            ed->setSize(1080, 680);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(40);
             auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 2.0f);
             juce::PNGImageFormat png;
@@ -329,7 +329,7 @@ int main(int argc, char** argv)
 
             EpsilonBounceProcessor empty;
             std::unique_ptr<juce::AudioProcessorEditor> ed2(empty.createEditor());
-            ed2->setSize(960, 600);
+            ed2->setSize(1080, 680);
             juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
             auto img2 = ed2->createComponentSnapshot(ed2->getLocalBounds(), true, 2.0f);
             auto file2 = snapDir.getChildFile("epsilon-bounce-empty.png");
