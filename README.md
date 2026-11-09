@@ -1,8 +1,10 @@
 # Epsilon Bounce
 
-**Re-groove any loop to a dembow, drill or trap pocket.** Drop an audio loop on the grid: Bounce finds every hit, slices it, and plays the slices back on your DAW's tempo with the groove you pick — so a stiff loop bounces, a straight hat pattern shuffles like UK drill, and anything you sample lands in the pocket at your project's BPM.
+**Re-groove any loop into 13 genre pockets, 42 presets, or the exact feel of any reference loop.** Drop an audio loop on the grid: Bounce finds every hit, slices it, and plays the slices back on your DAW's tempo with the groove you pick — so a stiff loop bounces, a straight hat pattern shuffles like UK drill, and anything you sample lands in the pocket at your project's BPM.
 
 Part of the Epsilon line by **Epsilon Sounds**.
+
+**Manual:** [Epsilon Bounce Manual (PDF)](docs/Epsilon%20Bounce%20Manual.pdf) - every control drawn, all 13 pockets and 42 presets, Groove Learn, and tips. The interactive version with the playable Pocket Lab is `docs/manual.html`.
 
 ![Epsilon Bounce](docs/epsilon-bounce-editor.png)
 
@@ -10,11 +12,7 @@ Part of the Epsilon line by **Epsilon Sounds**.
 
 1. **Load** — drag a WAV/AIFF/FLAC onto the grid (or *Load loop*). Up to 60 seconds.
 2. **Slice** — spectral-flux onset detection finds each hit, then walks back to where the attack really starts and keeps 3 ms of pre-roll so transients stay intact. The bar count is guessed from the length (tempo between 85 and 170 BPM), or set it with *Bars*.
-3. **Re-groove** — every slice is placed on the 16th grid, pulled toward it by *Tighten*, then moved by the groove:
-   - **DEMBOW** — the "ch" on the a-of-1 and and-of-2 (16ths 3 and 11) lean late, 6 and 14 lean early, light swing on off-16ths.
-   - **DRILL** — heavy 16th shuffle (~62 %), the half-time snare drags a hair, off-16ths drop 2 dB.
-   - **TRAP** — straight and tight, downbeats pushed forward a touch.
-   - **STRAIGHT** — just quantise (with *Tighten*) and tempo-follow.
+3. **Re-groove** — every slice is placed on the 16th grid, pulled toward it by *Tighten*, then moved by the pocket. 13 pockets: STRAIGHT, DEMBOW, DRILL, TRAP, REGGAETON, AFROBEATS, AMAPIANO, JERSEY, BOOM BAP, UK GARAGE, LO-FI, BAILE FUNK, PHONK, plus **LEARNED** — the feel copied from any reference loop with *Learn groove* (or Alt-drop on the grid). 42 presets give each genre 3–4 takes (more swing, tighter, pushed or laid back), and *Time* plays the loop at half or double time.
 4. **Play** — slices trigger from the host playhead (sample-accurate, follows tempo changes and loop jumps). Each new hit chokes the last with a 4 ms fade, so moved hits leave clean gaps, not clicks. With the host stopped, *Preview* plays at the *Tempo* knob.
 5. **Drag out** — hold *Drag out* and drop into a track: a 24-bit WAV of two loops, re-grooved at your project tempo.
 
@@ -43,8 +41,8 @@ The loop is saved inside your session (FLAC-compressed), so projects reopen with
 
 ## Tests
 
-- `BounceEngineTests` — 38 checks at 44.1 and 48 kHz: onset accuracy (< 1.5 ms), every hit on the right 16th, playback timing (< 1 ms), each groove's offsets, tempo follow, humanize stability, level bounds, silence, and speed (render < 2 % of a core, analysis < 2 s).
-- `BounceBench` (`-DBOUNCE_BUILD_BENCH=ON`) — drives the real plugin like a DAW: loads a WAV, plays it on a 140 BPM playhead, checks every groove at max, stopped/preview behaviour, session round-trip with the loop inside, drag-out render, and writes UI snapshots.
+- `BounceEngineTests` — 58 checks at 44.1 and 48 kHz: onset accuracy (< 1.5 ms), every hit on the right 16th, playback timing (< 1 ms), each groove's offsets, all 13 pockets distinct and bounded, Groove Learn recovering a known swing and late snare, tempo follow, humanize stability, level bounds, silence, and speed (render < 2 % of a core, analysis < 2 s).
+- `BounceBench` (`-DBOUNCE_BUILD_BENCH=ON`) — drives the real plugin like a DAW: loads a WAV, plays it on a 140 BPM playhead, checks every groove at max, all 42 presets, half/double time, learning from a reference WAV, stopped/preview behaviour, session round-trip with the loop inside, drag-out render, and writes UI snapshots.
 - CI (`.github/workflows/build.yml`) builds universal VST3/AU/Standalone on macOS 15 and runs all of the above plus `auval` and `pluginval` at strictness 8; `perf.yml` times the engine on Intel and Apple Silicon Macs.
 
 ## Look
