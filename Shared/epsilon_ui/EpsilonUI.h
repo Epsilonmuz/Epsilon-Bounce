@@ -16,6 +16,7 @@
 #include "EpsilonPalette.h"
 #include "EpsilonBrandArt.h"
 #include "EpsilonHeader.h"
+#include "EpsilonControls.h"
 
 namespace epsilon_ui
 {
@@ -38,6 +39,8 @@ inline juce::Font valueFont()    { return font(Weight::SemiBold, 13.0f); }
 inline juce::Font valueHero()    { return font(Weight::SemiBold, 24.0f); }
 inline juce::Font body()         { return font(Weight::Medium, 14.0f); }
 inline juce::Font caption()      { return font(Weight::Medium, 11.5f); }
+inline juce::Font buttonFont()   { return font(Weight::SemiBold, 10.5f).withExtraKerningFactor(1.5f / 10.5f); }
+inline juce::Font knobLabel(float size) { return font(Weight::SemiBold, size).withExtraKerningFactor(1.4f / size); }
 
 //==============================================================================
 class LookAndFeel : public juce::LookAndFeel_V4
@@ -69,98 +72,83 @@ public:
     const Palette& colours() const { return pal; }
     Tier getTier() const { return tier; }
 
-    // Knob: raised body, trim ring, ink pointer, live value arc from the default position.
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider& s) override
+    // Signature knob (controls::drawKnob): coin-edge bezel, machined face, watch-hand pointer, floating lume tip.
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float, float, juce::Slider& s) override
     {
-        const auto box = juce::Rectangle<float>((float) x, (float) y, (float) w, (float) h).reduced(2.0f);
-        const auto d = juce::jmin(box.getWidth(), box.getHeight());
-        const auto c = box.getCentre();
-        const auto rArc = d * 0.5f - size::arc;
-        const auto rBody = rArc * 0.76f;
-        const auto ang = a0 + pos * (a1 - a0);
-
-        juce::Path track;
-        track.addCentredArc(c.x, c.y, rArc, rArc, 0.0f, a0, a1, true);
-        g.setColour(pal.line);
-        g.strokePath(track, juce::PathStrokeType(size::arc, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
         const auto range = s.getRange();
-        // one-sided knobs fill from the bottom of their range; bipolar ones (range crosses 0) from 0
         const bool bipolar = range.getStart() < 0.0 && range.getEnd() > 0.0;
-        const auto origin = bipolar ? 0.0 : range.getStart();
-        const auto defPos = (float) s.valueToProportionOfLength(origin);
-        const auto aDef = a0 + defPos * (a1 - a0);
-        if (std::abs(ang - aDef) > 0.01f && s.isEnabled())
-        {
-            juce::Path arc;
-            arc.addCentredArc(c.x, c.y, rArc, rArc, 0.0f, juce::jmin(aDef, ang), juce::jmax(aDef, ang), true);
-            g.setColour(pal.live);
-            g.strokePath(arc, juce::PathStrokeType(size::arc, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        }
-
-        // body + shadow
-        g.setColour(juce::Colours::black.withAlpha(0.45f));
-        g.fillEllipse(juce::Rectangle<float>(rBody * 2.0f, rBody * 2.0f).withCentre(c.translated(0.0f, 2.0f)));
-        g.setColour(pal.raised);
-        g.fillEllipse(juce::Rectangle<float>(rBody * 2.0f, rBody * 2.0f).withCentre(c));
-        g.setColour(pal.trim.withAlpha(s.isEnabled() ? 1.0f : 0.4f));
-        g.drawEllipse(juce::Rectangle<float>(rBody * 2.0f, rBody * 2.0f).withCentre(c).reduced(0.75f), 1.5f);
-
-        const auto tip = c.getPointOnCircumference(rBody * 0.78f, ang);
-        const auto tail = c.getPointOnCircumference(rBody * 0.18f, ang);
-        g.setColour(pal.ink);
-        g.drawLine({ tail, tip }, d > 70.0f ? 3.0f : 2.5f);
-
-        if (s.hasKeyboardFocus(true))
-        {
-            g.setColour(pal.focus);
-            g.drawEllipse(juce::Rectangle<float>(rArc * 2.0f + 4.0f, rArc * 2.0f + 4.0f).withCentre(c), 1.5f);
-        }
+        const float origin = bipolar ? (float) s.valueToProportionOfLength(0.0) : 0.0f;
+        controls::State st;
+        st.pressed = s.isMouseButtonDown();
+        st.hover = s.isMouseOverOrDragging() && ! st.pressed;
+        st.disabled = ! s.isEnabled();
+        st.focus = s.hasKeyboardFocus(false) && keyboardUsed;
+        controls::drawKnob(g, juce::Rectangle<float>((float) x, (float) y, (float) w, (float) h).reduced(4.0f), pos, origin, pal, st, tier == Tier::Epsilon);
     }
 
-    // Toggles and segmented switches: off = raised + muted text, on = live fill.
+    // Buttons: property "segment" = a segment of a ModeSwitch, "pill" = pill toggle with LED,
+    // otherwise a machined keycap (a toggle when it toggles or has "toggleKey").
+    static controls::State buttonState(juce::Button& b, bool over, bool down)
+    {
+        controls::State st;
+        st.pressed = down;
+        st.hover = over && ! down;
+        st.on = b.getToggleState();
+        st.disabled = ! b.isEnabled();
+        return st;
+    }
     void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&, bool over, bool down) override
     {
-        auto r = b.getLocalBounds().toFloat().reduced(0.5f);
-        const bool on = b.getToggleState();
-        const bool pill = b.getProperties().getWithDefault("pill", false);
-        const auto rad = pill ? r.getHeight() * 0.5f : size::radiusMd;
-        auto fill = on ? pal.live : pal.raised;
-        if (!on && over) fill = fill.brighter(0.08f);
-        if (down) fill = fill.darker(0.1f);
-        g.setColour(fill);
-        g.fillRoundedRectangle(r, rad);
-        g.setColour(on ? pal.live : pal.line);
-        g.drawRoundedRectangle(r, rad, 1.0f);
-        if (b.hasKeyboardFocus(false)) { g.setColour(pal.focus); g.drawRoundedRectangle(r.expanded(1.5f), rad + 1.5f, 1.5f); }
+        const auto st = buttonState(b, over, down);
+        const auto r = b.getLocalBounds().toFloat();
+        juce::Colour label;
+        if (b.getProperties().getWithDefault("segment", false))
+            label = controls::drawSegment(g, r, pal, st);
+        else if (b.getProperties().getWithDefault("pill", false))
+        {
+            juce::Rectangle<float> area;
+            label = controls::drawPill(g, r.reduced(0.0f, juce::jmax(0.0f, (r.getHeight() - 26.0f) * 0.5f)), pal, st, area);
+            b.getProperties().set("labelX", area.getX());
+        }
+        else
+        {
+            const bool toggle = b.getClickingTogglesState() || (bool) b.getProperties().getWithDefault("toggleKey", false);
+            label = controls::drawKeycap(g, r, pal, st, toggle);
+        }
+        if (st.disabled) label = label.withAlpha(0.4f);
+        b.getProperties().set("labelColour", (juce::int64) label.getARGB());
     }
-    juce::Font getTextButtonFont(juce::TextButton&, int) override { return sectionLabel(); }
-    void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
+    juce::Font getTextButtonFont(juce::TextButton&, int) override { return buttonFont(); }
+    void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool down) override
     {
-        g.setFont(sectionLabel());
-        g.setColour(b.getToggleState() ? pal.liveInk : (b.isEnabled() ? pal.inkMuted : pal.inkMuted.withAlpha(0.4f)));
-        g.drawText(b.getButtonText().toUpperCase(), b.getLocalBounds(), juce::Justification::centred, false);
+        auto r = b.getLocalBounds().toFloat();
+        if (b.getProperties().getWithDefault("pill", false)) r = r.withTrimmedLeft((float) b.getProperties().getWithDefault("labelX", 0.0) - 2.0f);
+        const bool toggleKey = ! b.getProperties().getWithDefault("segment", false) && ! b.getProperties().getWithDefault("pill", false)
+                               && (b.getClickingTogglesState() || (bool) b.getProperties().getWithDefault("toggleKey", false));
+        if (toggleKey || b.getProperties().getWithDefault("segment", false)) r = r.withTrimmedBottom(5.0f);
+        if (down) r = r.translated(0.0f, 1.0f);
+        g.setFont(buttonFont());
+        g.setColour(juce::Colour((juce::uint32) (juce::int64) b.getProperties().getWithDefault("labelColour", (juce::int64) pal.ink.getARGB())));
+        g.drawText(b.getButtonText().toUpperCase(), r, juce::Justification::centred, false);
     }
+
+    void drawComboBox(juce::Graphics& g, int w, int h, bool down, int, int, int, int, juce::ComboBox& box) override
+    {
+        controls::State st;
+        st.hover = box.isMouseOver(true) && ! down;
+        st.disabled = ! box.isEnabled();
+        controls::drawCombo(g, juce::Rectangle<float>(0, 0, (float) w, (float) h), pal, st, box.isPopupActive());
+    }
+    void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override
+    {
+        label.setBounds(10, 0, box.getWidth() - box.getHeight() - 12, box.getHeight());
+        label.setFont(getComboBoxFont(box));
+    }
+    static inline bool keyboardUsed = false;     // focus rings only after keyboard navigation
 
     juce::Font getComboBoxFont(juce::ComboBox&) override { return body(); }
     juce::Font getPopupMenuFont() override { return body(); }
     juce::Font getLabelFont(juce::Label&) override { return controlLabel(); }
-    void drawComboBox(juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox&) override
-    {
-        auto r = juce::Rectangle<float>(0, 0, (float) w, (float) h).reduced(0.5f);
-        g.setColour(pal.bg); g.fillRoundedRectangle(r, size::radiusMd);
-        g.setColour(pal.line); g.drawRoundedRectangle(r, size::radiusMd, 1.0f);
-        juce::Path arrow;
-        const auto ax = (float) w - 14.0f, ay = h * 0.5f;
-        arrow.startNewSubPath(ax - 4.0f, ay - 2.0f); arrow.lineTo(ax, ay + 2.0f); arrow.lineTo(ax + 4.0f, ay - 2.0f);
-        g.setColour(pal.inkMuted); g.strokePath(arrow, juce::PathStrokeType(1.5f));
-    }
-    void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override
-    {
-        label.setBounds(8, 0, box.getWidth() - 28, box.getHeight());
-        label.setFont(getComboBoxFont(box));
-    }
-
 private:
     Tier tier;
     Palette pal;
@@ -170,20 +158,11 @@ private:
 // Panel helper: surface, radius-lg, hairline top highlight, section title.
 inline void drawPanel(juce::Graphics& g, juce::Rectangle<float> r, const Palette& p, const juce::String& title = {})
 {
-    g.setColour(juce::Colours::black.withAlpha(0.5f));
-    g.fillRoundedRectangle(r.translated(0.0f, 1.0f), size::radiusLg);
-    g.setColour(p.surface);
-    g.fillRoundedRectangle(r, size::radiusLg);
-    g.setColour(juce::Colours::white.withAlpha(0.04f));
-    g.drawHorizontalLine((int) r.getY() + 1, r.getX() + size::radiusLg, r.getRight() - size::radiusLg);
-    g.setColour(p.line);
-    g.drawRoundedRectangle(r.reduced(0.5f), size::radiusLg, 1.0f);
-    if (title.isNotEmpty())
-    {
-        g.setFont(sectionLabel());
-        g.setColour(p.inkMuted);
-        g.drawText(title.toUpperCase(), r.reduced((float) size::space4, 0.0f).withHeight(34.0f), juce::Justification::centredLeft, false);
-    }
+    controls::drawPanelFrame(g, r, p, title, [](float h) { return font(Weight::SemiBold, h); });
+}
+inline void drawSectionLabel(juce::Graphics& g, juce::Point<float> at, const juce::String& text, const Palette& p)
+{
+    controls::drawSectionLabel(g, at, text, p, [](float h) { return font(Weight::SemiBold, h); });
 }
 
 //==============================================================================
@@ -197,10 +176,13 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(pal.raised);
+        g.setGradientFill(juce::ColourGradient(controls::mix(pal.surface, pal.ink, 0.025f), 0.0f, 0.0f, pal.surface, 0.0f, (float) getHeight(), false));
+        g.fillAll();
         g.setColour(pal.line);
-        g.drawHorizontalLine(getHeight() - 1, 0.0f, (float) getWidth());
-        const float right = drawProductMark(g, { (float) size::space4, 9.0f }, 1.0f, tier, word, tagline,
+        g.fillRect(0, getHeight() - 2, getWidth(), 1);
+        g.setColour(juce::Colours::black.withAlpha(0.4f));
+        g.fillRect(0, getHeight() - 1, getWidth(), 1);
+        const float right = drawProductMark(g, { (float) size::space4, (getHeight() - 32.0f) * 0.5f }, 1.0f, tier, word, tagline,
                                             [](float h, bool b) { return font(b ? Weight::Bold : Weight::SemiBold, h); });
         const int newEnd = (int) std::ceil(juce::jmax(right, (float) size::space4 + 40.0f + 150.0f));
         if (newEnd != wordEnd) { wordEnd = newEnd; if (auto* p = getParentComponent()) p->resized(); }
@@ -284,7 +266,7 @@ private:
 };
 
 //==============================================================================
-// Knob with label and value underneath, attached to a parameter.
+// Knob cell: the signature knob, a spaced-caps label under it and the value (hero: in a value window).
 class Knob : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -297,36 +279,68 @@ public:
         slider.setVelocityModeParameters(1.0, 1, 0.08, false, juce::ModifierKeys::shiftModifier);
         slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
         addAndMakeVisible(slider);
+        slider.addMouseListener(this, false);
         attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(state, paramID, slider);
         if (auto* p = state.getParameter(paramID))
         {
             slider.setDoubleClickReturnValue(true, p->convertFrom0to1(p->getDefaultValue()));
             param = p;
         }
-        slider.onValueChange = [this] { repaint(getLocalBounds().removeFromBottom(isHero ? 32 : 18)); };
+        slider.onValueChange = [this] { repaint(textArea()); };
     }
     juce::Slider& getSlider() { return slider; }
+    void setTooltip(const juce::String& t) { SettableTooltipClient::setTooltip(t); slider.setTooltip(t); }
 
     void resized() override
     {
         auto r = getLocalBounds();
-        r.removeFromBottom(isHero ? 32 : 18);
-        r.removeFromBottom(16);
+        r.removeFromBottom(textHeight());
         slider.setBounds(r);
     }
+    void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+    void mouseExit(const juce::MouseEvent&) override  { repaint(); }
+    void mouseDown(const juce::MouseEvent&) override  { repaint(); }
+    void mouseUp(const juce::MouseEvent&) override    { repaint(); }
+
     void paint(juce::Graphics& g) override
     {
         auto* lf = dynamic_cast<LookAndFeel*>(&getLookAndFeel());
         const auto pal = lf ? lf->colours() : palette(Tier::Epsilon);
-        auto r = getLocalBounds();
-        auto valueArea = r.removeFromBottom(isHero ? 32 : 18);
-        auto labelArea = r.removeFromBottom(16);
-        g.setFont(controlLabel());
-        g.setColour(pal.inkMuted);
-        g.drawText(label, labelArea, juce::Justification::centred, false);
-        g.setFont(isHero ? valueHero() : valueFont());
-        g.setColour(pal.ink);
-        g.drawText(param ? param->getCurrentValueAsText() : juce::String(slider.getValue(), 1), valueArea, juce::Justification::centredTop, false);
+        const bool active = slider.isMouseOverOrDragging();
+        const bool dragging = slider.isMouseButtonDown();
+        auto r = textArea();
+        auto labelArea = r.removeFromTop(16);
+        g.setFont(knobLabel(isHero ? 10.5f : 10.0f));
+        g.setColour(! isEnabled() ? pal.inkMuted.withAlpha(0.4f) : active ? pal.ink : pal.inkMuted);
+        g.drawText(label.toUpperCase(), labelArea, juce::Justification::centred, false);
+
+        // value + unit as two runs: number in ink, unit smaller in inkMuted
+        juce::String text = param ? param->getCurrentValueAsText() : juce::String(slider.getValue(), 1);
+        juce::String num = text, unit;
+        const int sp = text.lastIndexOfChar(' ');
+        if (sp > 0) { num = text.substring(0, sp); unit = text.substring(sp + 1); }
+        const auto vCol = dragging ? pal.live : pal.ink;
+        const auto uCol = dragging ? pal.live : pal.inkMuted;
+        auto valueArea = r.withHeight(isHero ? 26 : 16).toFloat();
+        if (isHero)
+        {
+            const auto win = juce::Rectangle<float>(76.0f, 22.0f).withCentre({ valueArea.getCentreX(), valueArea.getY() + 13.0f });
+            controls::drawValueWindow(g, win, pal, active);
+            valueArea = win;
+        }
+        const auto fNum = font(Weight::Medium, isHero ? 13.0f : 12.0f), fUnit = font(Weight::Medium, isHero ? 10.5f : 10.5f);
+        const float wNum = (float) juce::GlyphArrangement::getStringWidthInt(fNum, num);
+        const float wUnit = unit.isEmpty() ? 0.0f : (float) juce::GlyphArrangement::getStringWidthInt(fUnit, unit) + 2.0f;
+        const float x0 = valueArea.getCentreX() - (wNum + wUnit) * 0.5f;
+        g.setFont(fNum);
+        g.setColour(isEnabled() ? vCol : vCol.withAlpha(0.4f));
+        g.drawText(num, juce::Rectangle<float>(x0, valueArea.getY(), wNum + 2.0f, valueArea.getHeight()), juce::Justification::centredLeft, false);
+        if (unit.isNotEmpty())
+        {
+            g.setFont(fUnit);
+            g.setColour(isEnabled() ? uCol : uCol.withAlpha(0.4f));
+            g.drawText(unit, juce::Rectangle<float>(x0 + wNum + 2.0f, valueArea.getY() + 0.5f, wUnit + 4.0f, valueArea.getHeight()), juce::Justification::centredLeft, false);
+        }
     }
 
 private:
@@ -335,6 +349,8 @@ private:
     juce::RangedAudioParameter* param = nullptr;
     juce::String label;
     bool isHero;
+    int textHeight() const { return isHero ? 44 : 32; }
+    juce::Rectangle<int> textArea() const { return getLocalBounds().removeFromBottom(textHeight()); }
 };
 
 //==============================================================================
@@ -351,6 +367,7 @@ public:
         {
             auto* b = buttons.add(new juce::TextButton(p->choices[i]));
             b->setClickingTogglesState(false);
+            b->getProperties().set("segment", true);
             b->onClick = [this, i] { choice->beginChangeGesture(); *choice = i; choice->endChangeGesture(); };
             addAndMakeVisible(b);
         }
@@ -358,12 +375,18 @@ public:
         refresh();
     }
     ~ModeSwitch() override { state.removeParameterListener(paramID, this); cancelPendingUpdate(); }
-    // Lay the choices out in this many rows (long lists like a genre picker).
-    void setRows(int numRows) { rows = juce::jmax(1, numRows); resized(); }
+    // Lay the choices out in this many rows (long lists like a genre picker): each choice becomes a
+    // machined keycap with a lume bar, in a recessed tray.
+    void setRows(int numRows)
+    {
+        rows = juce::jmax(1, numRows);
+        for (auto* b : buttons) { b->getProperties().set("segment", rows == 1); b->getProperties().set("toggleKey", rows > 1); }
+        resized();
+    }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced(2);
+        auto r = getLocalBounds().reduced(rows > 1 ? 5 : 0);
         const int n = buttons.size();
         const int perRow = (n + rows - 1) / rows;
         const int rowH = r.getHeight() / rows;
@@ -373,15 +396,18 @@ public:
             const int first = row * perRow, count = juce::jmin(perRow, n - first);
             if (count <= 0) break;
             const int w = line.getWidth() / perRow;
-            for (int i = 0; i < count; ++i) buttons[first + i]->setBounds(line.removeFromLeft(w).reduced(1, 1));
+            for (int i = 0; i < count; ++i) buttons[first + i]->setBounds(line.removeFromLeft(w).reduced(rows > 1 ? 3 : 0, rows > 1 ? 3 : 0));
         }
     }
     void paint(juce::Graphics& g) override
     {
         auto* lf = dynamic_cast<LookAndFeel*>(&getLookAndFeel());
         const auto pal = lf ? lf->colours() : palette(Tier::Epsilon);
-        g.setColour(pal.bg); g.fillRoundedRectangle(getLocalBounds().toFloat(), size::radiusMd);
-        g.setColour(pal.line); g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), size::radiusMd, 1.0f);
+        if (rows > 1) { controls::drawWell(g, getLocalBounds().toFloat(), pal); return; }
+        std::vector<juce::Rectangle<float>> segs;
+        int sel = -1;
+        for (int i = 0; i < buttons.size(); ++i) { segs.push_back(buttons[i]->getBounds().toFloat()); if (buttons[i]->getToggleState()) sel = i; }
+        controls::drawSegmentTrack(g, getLocalBounds().toFloat(), segs, sel, pal);
     }
 
 private:
@@ -392,7 +418,7 @@ private:
     int rows = 1;
     void parameterChanged(const juce::String&, float) override { triggerAsyncUpdate(); }
     void handleAsyncUpdate() override { refresh(); }
-    void refresh() { for (int i = 0; i < buttons.size(); ++i) buttons[i]->setToggleState(choice->getIndex() == i, juce::dontSendNotification); }
+    void refresh() { for (int i = 0; i < buttons.size(); ++i) buttons[i]->setToggleState(choice->getIndex() == i, juce::dontSendNotification); repaint(); }
 };
 
 } // namespace epsilon_ui

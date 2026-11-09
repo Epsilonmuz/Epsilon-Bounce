@@ -22,6 +22,7 @@
       <FILE id="EBf005" name="EpsilonUI.h" compile="0" resource="0" file="Shared/epsilon_ui/EpsilonUI.h"/>
       <FILE id="EBf006" name="EpsilonPalette.h" compile="0" resource="0" file="Shared/epsilon_ui/EpsilonPalette.h"/>
       <FILE id="EBf007" name="EpsilonBrandArt.h" compile="0" resource="0" file="Shared/epsilon_ui/EpsilonBrandArt.h"/>
+      <FILE id="EBf008" name="EpsilonControls.h" compile="0" resource="0" file="Shared/epsilon_ui/EpsilonControls.h"/>
     </GROUP>
     <GROUP id="EBg2" name="Resources">
       <FILE id="EBf008" name="BarlowSemiCondensed-Medium.ttf" compile="0" resource="1" file="Resources/BarlowSemiCondensed-Medium.ttf"/>

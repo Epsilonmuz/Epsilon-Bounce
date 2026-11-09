@@ -57,8 +57,7 @@ void GrooveGrid::renderCache()
     juce::Graphics g(cache);
     g.addTransform(juce::AffineTransform::scale(scale));
     const auto r = getLocalBounds().toFloat();
-    g.setColour(pal.bg);
-    g.fillRoundedRectangle(r, size::radiusMd);
+    controls::drawWell(g, r, pal);
     if (! loop || loop->slices.empty()) return;
 
     const int steps = loop->bars * bounce::stepsPerBar;
@@ -92,8 +91,7 @@ void GrooveGrid::paint(juce::Graphics& g)
     const auto r = getLocalBounds().toFloat();
     if (! loop || loop->slices.empty())
     {
-        g.setColour(pal.bg);
-        g.fillRoundedRectangle(r, size::radiusMd);
+        controls::drawWell(g, r, pal);
         g.setColour(dragOver ? pal.live : pal.line);
         const float dashes[] { 6.0f, 5.0f };
         juce::Path outline; outline.addRoundedRectangle(r.reduced(6.0f), size::radiusMd);
@@ -319,7 +317,7 @@ void EpsilonBounceEditor::timerCallback()
     learnButton.setButtonText(proc.isLearning() ? "Listening..." : "Match drums");
     {
         const int h = juce::roundToInt(proc.state.getParameter("hold")->convertFrom0to1(proc.state.getParameter("hold")->getValue()));
-        const juce::String txt = h == 1 ? "Hold: on" : h == 2 ? "Hold: off" : (proc.holdActive() ? "Hold: auto (on)" : "Hold: auto (off)");
+        const juce::String txt = h == 1 ? "Hold: on" : h == 2 ? "Hold: off" : juce::String("Hold: auto");
         if (holdButton.getButtonText() != txt) holdButton.setButtonText(txt);
         holdButton.setToggleState(proc.holdActive(), juce::dontSendNotification);
         const bool isGrid = proc.material() == bounce::Material::grid;
@@ -349,13 +347,12 @@ void EpsilonBounceEditor::paint(juce::Graphics& g)
         g.setColour(pal.ink);
         g.drawText(loopTitle, heroPanel.withHeight(42).withTrimmedLeft(96).withTrimmedRight(400), juce::Justification::centredLeft, true);
     }
-    g.setFont(sectionLabel());
-    g.setColour(pal.inkMuted);
-    g.drawText("SLICING", slicePanel.withHeight(14), juce::Justification::centredLeft, false);
-    g.drawText("BARS", barsLabel, juce::Justification::centredLeft, false);
-    g.drawText("GRID CHOP", chopLabel, juce::Justification::centredLeft, false);
-    g.drawText("CUT ON", cutLabel, juce::Justification::centredRight, false);
-    g.drawText("TIME", timeSwitch.getBounds().translated(0, -18).withHeight(14), juce::Justification::centredLeft, false);
+    // section labels: the Hallmark's floating bar + spaced caps
+    drawSectionLabel(g, { (float) slicePanel.getX(), (float) slicePanel.getY() + 7.0f }, "Slicing", pal);
+    drawSectionLabel(g, { (float) barsLabel.getX(), (float) barsLabel.getCentreY() }, "Bars", pal);
+    drawSectionLabel(g, { (float) chopLabel.getX(), (float) chopLabel.getCentreY() }, "Grid chop", pal);
+    drawSectionLabel(g, { (float) cutLabel.getX() + 4.0f, (float) cutLabel.getCentreY() }, "Cut on", pal);
+    drawSectionLabel(g, { (float) timeSwitch.getX(), (float) timeSwitch.getY() - 11.0f }, "Time", pal);
 
     // what the learned groove is, under the Learn button
     const auto info = proc.getLearnInfo();
@@ -411,7 +408,7 @@ void EpsilonBounceEditor::resized()
     cutLabel = titleRow.removeFromRight(70).withTrimmedRight(size::space2);
     h.removeFromTop(4);
     auto sliceRow = h.removeFromBottom(112);
-    grooveSwitch.setBounds(h.removeFromBottom(84));
+    grooveSwitch.setBounds(h.removeFromBottom(108));
     h.removeFromBottom(size::space3);
     grid.setBounds(h);
 
