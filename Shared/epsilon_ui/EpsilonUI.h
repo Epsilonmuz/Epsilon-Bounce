@@ -15,6 +15,7 @@
 #include <JuceHeader.h>
 #include "EpsilonPalette.h"
 #include "EpsilonBrandArt.h"
+#include "EpsilonHeader.h"
 
 namespace epsilon_ui
 {
@@ -190,12 +191,8 @@ inline void drawPanel(juce::Graphics& g, juce::Rectangle<float> r, const Palette
 class HeaderBar : public juce::Component
 {
 public:
-    HeaderBar(Tier t, const juce::String& productWord) : tier(t), pal(palette(t)), word(productWord)
-    {
-        hallmark = brand::hallmark(pal.trim, true);          // 26 px: the solid small-size seal
-        if (t == Tier::Muzi) muziWord = brand::muziWordmark(pal.trim);
-        setOpaque(true);
-    }
+    HeaderBar(Tier t, const juce::String& productWord, const juce::String& taglineText = {})
+        : tier(t), pal(palette(t)), word(productWord), tagline(taglineText) { setOpaque(true); }
     juce::Rectangle<int> getControlArea() const { return getLocalBounds().withTrimmedLeft(wordEnd + size::space6).reduced(size::space3, 8); }
 
     void paint(juce::Graphics& g) override
@@ -203,43 +200,17 @@ public:
         g.fillAll(pal.raised);
         g.setColour(pal.line);
         g.drawHorizontalLine(getHeight() - 1, 0.0f, (float) getWidth());
-        auto r = getLocalBounds().reduced(size::space4, 0);
-        const auto mark = r.removeFromLeft(26).withSizeKeepingCentre(26, 26).toFloat();
-        if (hallmark) hallmark->drawWithin(g, mark, juce::RectanglePlacement::centred, 1.0f);
-        r.removeFromLeft(size::space3);
-        if (tier == Tier::Muzi)
-        {
-            // Muzi: the drawn serif MUZI + product word in spaced caps, endorsed "by Epsilon Sounds"
-            const auto wm = juce::Rectangle<float>((float) r.getX(), 9.0f, 61.0f, 17.5f);
-            if (muziWord) muziWord->drawWithin(g, wm, juce::RectanglePlacement::xLeft | juce::RectanglePlacement::yTop, 1.0f);
-            g.setColour(pal.trim);
-            g.setFont(font(Weight::SemiBold, 17.0f).withExtraKerningFactor(0.28f));
-            const auto product = word.toUpperCase();
-            const auto pw = juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), product);
-            const int px = (int) wm.getRight() + 10;
-            g.drawText(product, juce::Rectangle<int>(px, 7, pw + 8, 22), juce::Justification::centredLeft, false);
-            g.setColour(pal.inkMuted);
-            g.setFont(caption().withExtraKerningFactor(0.12f));
-            g.drawText("BY EPSILON SOUNDS", juce::Rectangle<int>(r.getX(), 30, 200, 12), juce::Justification::centredLeft, false);
-            wordEnd = juce::jmax(px + pw + 8, r.getX() + 120);
-        }
-        else
-        {
-            g.setColour(pal.trim);
-            g.setFont(font(Weight::Bold, 18.0f).withExtraKerningFactor(0.22f));
-            const auto text = "EPSILON " + word.toUpperCase();
-            const auto lineW = juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), text);
-            g.drawText(text, r.withWidth(lineW + 8), juce::Justification::centredLeft, false);
-            wordEnd = r.getX() + lineW + 8;
-        }
+        const float right = drawProductMark(g, { (float) size::space4, 9.0f }, 1.0f, tier, word, tagline,
+                                            [](float h, bool b) { return font(b ? Weight::Bold : Weight::SemiBold, h); });
+        const int newEnd = (int) std::ceil(juce::jmax(right, (float) size::space4 + 40.0f + 150.0f));
+        if (newEnd != wordEnd) { wordEnd = newEnd; if (auto* p = getParentComponent()) p->resized(); }
     }
 
 private:
     Tier tier;
     Palette pal;
-    juce::String word;
-    std::unique_ptr<juce::Drawable> hallmark, muziWord;
-    mutable int wordEnd = 260;
+    juce::String word, tagline;
+    int wordEnd = 260;
 };
 
 //==============================================================================

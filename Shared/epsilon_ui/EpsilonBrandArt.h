@@ -3,7 +3,7 @@
 // Master mark: the Hallmark (curved epsilon with a free-floating bar, in a rounded seal), v1 2026-11-09.
 // Usage: hallmark() from 32 px up; hallmarkSmall() (solid seal, cut-out epsilon) for 16-31 px.
 // Ink is the tier's trim colour: gold on Muzi, platinum on Epsilon. Never champagne (that means "live").
-#include <JuceHeader.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 
 namespace epsilon_ui::brand
 {
@@ -21,4 +21,37 @@ inline std::unique_ptr<juce::Drawable> fromSvg(const char* svg, juce::Colour ink
 }
 inline std::unique_ptr<juce::Drawable> hallmark(juce::Colour ink, bool small = false) { return fromSvg(small ? hallmarkSmallSvg() : hallmarkSvg(), ink); }
 inline std::unique_ptr<juce::Drawable> muziWordmark(juce::Colour ink) { return fromSvg(muziWordmarkSvg(), ink); }
+
+// Plain vector outline in the SVG's own units (safe to keep in a static: no Component inside).
+// evenOdd must match the SVG's fill-rule: the hallmarks use evenodd (the seal's hole), MUZI uses nonzero.
+inline juce::Path outline(const char* svg, bool evenOdd)
+{
+    juce::Path p;
+    if (auto d = fromSvg(svg, juce::Colours::white))
+    {
+        p = d->getOutlineAsPath();
+        p.setUsingNonZeroWinding(! evenOdd);
+    }
+    return p;
+}
+inline const juce::Path& hallmarkPath(bool small)
+{
+    static const juce::Path big = outline(hallmarkSvg(), true), sm = outline(hallmarkSmallSvg(), true);
+    return small ? sm : big;
+}
+inline const juce::Path& muziWordmarkPath()
+{
+    static const juce::Path p = outline(muziWordmarkSvg(), false);
+    return p;
+}
+// Fill an outline into an area keeping proportions; returns the drawn bounds.
+inline juce::Rectangle<float> fillOutline(juce::Graphics& g, const juce::Path& p, juce::Rectangle<float> area, juce::RectanglePlacement placement, juce::Colour ink)
+{
+    const auto b = p.getBounds();
+    if (b.isEmpty()) return {};
+    const auto t = placement.getTransformToFit(b, area);
+    g.setColour(ink);
+    g.fillPath(p, t);
+    return b.transformedBy(t);
+}
 } // namespace epsilon_ui::brand

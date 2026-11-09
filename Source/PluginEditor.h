@@ -40,7 +40,7 @@ public:
 private:
     EpsilonBounceProcessor& proc;
     epsilon_ui::LookAndFeel look { epsilon_ui::Tier::Epsilon };
-    epsilon_ui::HeaderBar header { epsilon_ui::Tier::Epsilon, "Bounce" };
+    epsilon_ui::HeaderBar header { epsilon_ui::Tier::Epsilon, "Bounce", juce::String (juce::CharPointer_UTF8 ("Dembow \xc2\xb7 drill \xc2\xb7 trap re-groover")) };
     epsilon_ui::FooterBar footer { epsilon_ui::Tier::Epsilon, JucePlugin_VersionString };
 
     juce::TextButton loadButton { "Load loop" }, previewButton { "Preview" };

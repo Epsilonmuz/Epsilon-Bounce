@@ -1,7 +1,7 @@
 #pragma once
 // epsilon_ui palette — the Epsilon Sounds colours and sizes (design system v1), no font dependency.
 // Include this alone to recolour an existing UI; EpsilonUI.h builds the shared controls on top.
-#include <JuceHeader.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 
 namespace epsilon_ui
 {
