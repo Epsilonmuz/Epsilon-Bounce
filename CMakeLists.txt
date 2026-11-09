@@ -25,6 +25,7 @@ juce_add_plugin(EpsilonBounce
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     FORMATS ${bounce_formats}
     PRODUCT_NAME "Epsilon Bounce"
+    ICON_BIG Resources/AppIcon.png
     DESCRIPTION "Re-grooves audio loops to dembow, drill and trap pockets"
 )
 juce_generate_juce_header(EpsilonBounce)
