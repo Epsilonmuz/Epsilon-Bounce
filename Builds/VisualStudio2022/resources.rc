@@ -9,8 +9,8 @@
 #include <windows.h>
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION  1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION  1,1,0,0
+PRODUCTVERSION  1,1,0,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -18,9 +18,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName",  "Epsilon Sounds\0"
       VALUE "FileDescription",  "Epsilon Bounce\0"
-      VALUE "FileVersion",  "1.0.0\0"
+      VALUE "FileVersion",  "1.1.0\0"
       VALUE "ProductName",  "Epsilon Bounce\0"
-      VALUE "ProductVersion",  "1.0.0\0"
+      VALUE "ProductVersion",  "1.1.0\0"
     END
   END
 

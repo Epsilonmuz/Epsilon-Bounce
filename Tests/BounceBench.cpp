@@ -164,15 +164,86 @@ int main(int argc, char** argv)
         const auto f = p.renderToFile(2);
         check(f.existsAsFile() && f.getSize() > 100000, tag + "drag-out renders " + f.getFileName());
 
+
+        // ---- v1.1: presets, time modality, Groove Learn
+        {
+            check(bounce::presetCount >= 39, tag + juce::String(bounce::presetCount) + " factory presets");
+            bool allOk = true;
+            for (int i = 0; i < bounce::presetCount; ++i)
+            {
+                p.applyPreset(i);
+                const auto& pr = bounce::presets[i];
+                allOk &= juce::roundToInt(p.state.getParameter("groove")->convertFrom0to1(p.state.getParameter("groove")->getValue())) == (int) pr.groove;
+                allOk &= std::abs(p.state.getParameter("swing")->convertFrom0to1(p.state.getParameter("swing")->getValue()) - pr.swing) < 0.2f;
+            }
+            check(allOk, tag + "every preset sets its groove and swing");
+
+            // half-time: over 8 quarter notes at 140 BPM a 2-bar loop plays half of itself
+            p.applyPreset(0);                      // Quantize Clean: straight, tighten 100
+            p.prepareToPlay(sr, 256);
+            auto normal = onsets(play(p, head, sr, 8.0));
+            p.state.getParameter("time")->setValueNotifyingHost(p.state.getParameter("time")->convertTo0to1(1.0f));
+            p.prepareToPlay(sr, 256);
+            auto half = onsets(play(p, head, sr, 8.0));
+            p.state.getParameter("time")->setValueNotifyingHost(p.state.getParameter("time")->convertTo0to1(2.0f));
+            p.prepareToPlay(sr, 256);
+            auto dbl = onsets(play(p, head, sr, 8.0));
+            check(normal.size() == 16 && half.size() == 8 && dbl.size() == 32,
+                  tag + "time modality: normal / half / double = " + juce::String((int) normal.size()) + " / " + juce::String((int) half.size()) + " / " + juce::String((int) dbl.size()) + " hits");
+            const double sps = 60.0 / 140.0 / 4.0 * sr;
+            check(half.size() > 1 && std::abs((half[1] - half[0]) - 3 * 2 * sps) < sr * 0.001, tag + "half-time: 16th 3 lands on host 16th 6");
+            p.state.getParameter("time")->setValueNotifyingHost(0.0f);
+
+            // learn: a swung reference file
+            juce::AudioBuffer<float> ref(2, (int) std::lround(8 * 60.0 / 100.0 * sr)); ref.clear();
+            juce::Random rng(9);
+            const double rsps = ref.getNumSamples() / 32.0;
+            for (int b = 0; b < 32; ++b)
+            {
+                const double pos = b + ((b & 1) ? 0.26 : 0.0);
+                const int at = (int) std::lround(pos * rsps);
+                for (int i = 0; i < (int) (0.04 * sr) && at + i < ref.getNumSamples(); ++i)
+                {
+                    const float v = std::exp(-(float) i / (float) (0.01 * sr)) * ((b & 1) ? 0.4f : 0.7f) * (rng.nextFloat() * 2.0f - 1.0f);
+                    ref.setSample(0, at + i, v); ref.setSample(1, at + i, v);
+                }
+            }
+            auto rf = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-reference.wav");
+            rf.deleteFile();
+            {
+                juce::WavAudioFormat wav;
+                std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(rf.createOutputStream().release(), sr, 2, 24, {}, 0));
+                w->writeFromAudioSampleBuffer(ref, 0, ref.getNumSamples());
+            }
+            const int ls = p.getLearnSerial();
+            check(p.learnFromFile(rf).isEmpty(), tag + "learn: accepts a reference WAV");
+            for (int i = 0; i < 400 && (p.getLearnSerial() == ls || p.isLearning()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            const auto info = p.getLearnInfo();
+            check(info.valid && std::abs(info.swingPercent - 63.0f) < 2.5f, tag + "learn: reads " + juce::String(info.swingPercent, 1) + " % swing from the reference (63 % in)");
+            check(juce::roundToInt(p.state.getParameter("groove")->convertFrom0to1(p.state.getParameter("groove")->getValue())) == (int) bounce::Groove::learned,
+                  tag + "learn: switches the groove to LEARNED");
+            p.state.getParameter("tighten")->setValueNotifyingHost(1.0f);
+            p.prepareToPlay(sr, 256);
+            auto lo = onsets(play(p, head, sr, 8.0));
+            const double off = lo.size() > 1 ? (lo[1] - 3 * sps) / sps : -1.0;   // the loop's 2nd hit is 16th 3 (an off-16th)
+            check(std::abs(off - 0.26) < 0.04, tag + "learn: off-16ths of your loop now land " + juce::String(off, 3) + " late (0.26 in the reference)");
+
+            juce::MemoryBlock st2;
+            p.getStateInformation(st2);
+            EpsilonBounceProcessor q2;
+            q2.setStateInformation(st2.getData(), (int) st2.getSize());
+            const auto i2 = q2.getLearnInfo();
+            check(i2.valid && i2.name == info.name && std::abs(q2.currentGroove().learned.offset[1] - p.currentGroove().learned.offset[1]) < 1e-3f,
+                  tag + "learn: the learned feel is saved in the session");
+            for (int i = 0; i < 200 && q2.isAnalysing(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+        }
+
         if (sr == 48000.0 && snapDir != juce::File())
         {
             snapDir.createDirectory();
-            for (int g = 0; g < 4; ++g) p.state.getParameter("groove")->setValueNotifyingHost(p.state.getParameter("groove")->convertTo0to1(1.0f));
-            for (auto id : { "amount", "swing", "humanize", "accent", "feel" })
-                p.state.getParameter(id)->setValueNotifyingHost(p.state.getParameter(id)->getDefaultValue());
-            p.state.getParameter("swing")->setValueNotifyingHost(0.2f);
+            p.applyPreset(3);                      // Dembow Clasico
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
-            ed->setSize(900, 560);
+            ed->setSize(960, 600);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(40);
             auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 2.0f);
             juce::PNGImageFormat png;
@@ -183,7 +254,7 @@ int main(int argc, char** argv)
 
             EpsilonBounceProcessor empty;
             std::unique_ptr<juce::AudioProcessorEditor> ed2(empty.createEditor());
-            ed2->setSize(900, 560);
+            ed2->setSize(960, 600);
             juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
             auto img2 = ed2->createComponentSnapshot(ed2->getLocalBounds(), true, 2.0f);
             auto file2 = snapDir.getChildFile("epsilon-bounce-empty.png");

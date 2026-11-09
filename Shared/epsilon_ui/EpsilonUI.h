@@ -358,11 +358,23 @@ public:
         refresh();
     }
     ~ModeSwitch() override { state.removeParameterListener(paramID, this); cancelPendingUpdate(); }
+    // Lay the choices out in this many rows (long lists like a genre picker).
+    void setRows(int numRows) { rows = juce::jmax(1, numRows); resized(); }
+
     void resized() override
     {
         auto r = getLocalBounds().reduced(2);
-        const int w = r.getWidth() / juce::jmax(1, buttons.size());
-        for (auto* b : buttons) b->setBounds(r.removeFromLeft(w).reduced(1, 0));
+        const int n = buttons.size();
+        const int perRow = (n + rows - 1) / rows;
+        const int rowH = r.getHeight() / rows;
+        for (int row = 0; row < rows; ++row)
+        {
+            auto line = r.removeFromTop(rowH);
+            const int first = row * perRow, count = juce::jmin(perRow, n - first);
+            if (count <= 0) break;
+            const int w = line.getWidth() / perRow;
+            for (int i = 0; i < count; ++i) buttons[first + i]->setBounds(line.removeFromLeft(w).reduced(1, 1));
+        }
     }
     void paint(juce::Graphics& g) override
     {
@@ -377,6 +389,7 @@ private:
     juce::String paramID;
     juce::AudioParameterChoice* choice = nullptr;
     juce::OwnedArray<juce::TextButton> buttons;
+    int rows = 1;
     void parameterChanged(const juce::String&, float) override { triggerAsyncUpdate(); }
     void handleAsyncUpdate() override { refresh(); }
     void refresh() { for (int i = 0; i < buttons.size(); ++i) buttons[i]->setToggleState(choice->getIndex() == i, juce::dontSendNotification); }

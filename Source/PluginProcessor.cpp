@@ -14,7 +14,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout EpsilonBounceProcessor::crea
     using namespace juce;
     AudioProcessorValueTreeState::ParameterLayout l;
     const auto attr = [](std::function<String(float)> f) { return AudioParameterFloatAttributes().withStringFromValueFunction([f](float v, int) { return f(v); }); };
-    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "groove", 1 }, "Groove", StringArray { "STRAIGHT", "DEMBOW", "DRILL", "TRAP" }, 1));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "groove", 1 }, "Groove", [] { StringArray names; for (int i = 0; i < bounce::grooveCount; ++i) names.add(bounce::grooveName((bounce::Groove) i)); return names; }(), 1));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "amount", 1 }, "Amount", NormalisableRange<float>(0.0f, 150.0f, 0.1f), 100.0f, attr(pct)));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "swing", 1 }, "Swing", NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f, attr(pct)));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "tighten", 1 }, "Tighten", NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f, attr(pct)));
@@ -29,6 +29,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout EpsilonBounceProcessor::crea
                                                 attr([](float v) { return juce::String(v, 1) + " BPM"; })));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "sensitivity", 1 }, "Sensitivity", NormalisableRange<float>(0.0f, 100.0f, 1.0f), 50.0f, attr(pct)));
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "bars", 1 }, "Bars", StringArray { "Auto", "1 bar", "2 bars", "4 bars", "8 bars" }, 0));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "time", 2 }, "Time", StringArray { "NORMAL", "HALF-TIME", "DOUBLE-TIME" }, 0));
     return l;
 }
 
@@ -42,6 +43,8 @@ EpsilonBounceProcessor::EpsilonBounceProcessor()
     pFeel = state.getRawParameterValue("feel");         pOutput = state.getRawParameterValue("output");
     pSync = state.getRawParameterValue("sync");         pTempo = state.getRawParameterValue("tempo");
     pSensitivity = state.getRawParameterValue("sensitivity"); pBars = state.getRawParameterValue("bars");
+    pTime = state.getRawParameterValue("time");
+    for (auto& a : learnedAtoms) a.store(0.0f);
     startTimerHz(10);
 }
 
@@ -73,7 +76,24 @@ bounce::GrooveSettings EpsilonBounceProcessor::readGroove() const
     g.humanizeMs = pHumanize->load(std::memory_order_relaxed);
     g.accent = pAccent->load(std::memory_order_relaxed) * 0.01f;
     g.feelMs = pFeel->load(std::memory_order_relaxed);
+    if (g.groove == bounce::Groove::learned) g.learned = readLearned();
     return g;
+}
+
+bounce::GrooveTemplate EpsilonBounceProcessor::readLearned() const
+{
+    bounce::GrooveTemplate t;
+    for (int i = 0; i < bounce::stepsPerBar; ++i)
+    {
+        t.offset[(size_t) i] = learnedAtoms[(size_t) i].load(std::memory_order_relaxed);
+        t.accentDb[(size_t) i] = learnedAtoms[(size_t) (i + bounce::stepsPerBar)].load(std::memory_order_relaxed);
+    }
+    return t;
+}
+
+double EpsilonBounceProcessor::timeFactor() const
+{
+    return bounce::timeFactor((bounce::TimeMode) juce::jlimit(0, 2, juce::roundToInt(pTime->load(std::memory_order_relaxed))));
 }
 bounce::GrooveSettings EpsilonBounceProcessor::currentGroove() const { return readGroove(); }
 
@@ -86,7 +106,7 @@ double EpsilonBounceProcessor::playbackBpm() const
 static bool sameSettings(const bounce::GrooveSettings& a, const bounce::GrooveSettings& b)
 {
     return a.groove == b.groove && a.amount == b.amount && a.swing == b.swing && a.tighten == b.tighten
-        && a.humanizeMs == b.humanizeMs && a.accent == b.accent && a.feelMs == b.feelMs;
+        && a.humanizeMs == b.humanizeMs && a.accent == b.accent && a.feelMs == b.feelMs && a.learned == b.learned;
 }
 
 void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -113,11 +133,15 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             if (sync && pos->getIsPlaying())
                 if (auto ppq = pos->getPpqPosition()) { playing = true; stepStart = *ppq * 4.0; }
         }
+    // Time modality: half-time plays the loop's grid at half speed, double-time at twice.
+    const double k = timeFactor();
+    stepStart *= k;
+    bpm *= k;
     const double stepsPerSample = bpm / 60.0 * 4.0 / rate;
     if (! playing && preview.load(std::memory_order_relaxed))
     {
         playing = true;
-        stepStart = internalStep;
+        stepStart = internalStep;   // already in grid steps
         internalStep += frames * stepsPerSample;
         const double loopSteps = loop->bars * bounce::stepsPerBar;
         if (internalStep > loopSteps * 1024.0) internalStep = std::fmod(internalStep, loopSteps);
@@ -238,13 +262,14 @@ juce::File EpsilonBounceProcessor::renderToFile(int loops)
 {
     auto loop = getLoop();
     if (! loop || loop->slices.empty()) return {};
-    const double bpm = playbackBpm();
+    const double bpm = gridBpm();
+    const double hostTempo = playbackBpm();
     const double outRate = rate > 0 ? rate : 44100.0;
     bounce::Player p;
     p.prepare(outRate, 512);
     p.update(*loop, readGroove(), bpm);
     const double sps = bpm / 60.0 * 4.0 / outRate;
-    const int total = (int) std::floor(loops * loop->bars * bounce::stepsPerBar / sps);
+    const int total = (int) std::floor(loops * loop->bars * bounce::stepsPerBar / sps);   // whole loops at the grid speed
     juce::AudioBuffer<float> out(2, total);
     out.clear();
     const float gain = juce::Decibels::decibelsToGain(pOutput->load());
@@ -254,7 +279,8 @@ juce::File EpsilonBounceProcessor::renderToFile(int loops)
     const auto grooveName = juce::String(bounce::grooveName(readGroove().groove)).toLowerCase();
     auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Epsilon Bounce");
     dir.createDirectory();
-    auto file = dir.getChildFile(juce::File::createLegalFileName(loopName + " - " + grooveName + " " + juce::String(juce::roundToInt(bpm)) + " BPM.wav"));
+    auto file = dir.getChildFile(juce::File::createLegalFileName(loopName + " - " + grooveName + " " + juce::String(juce::roundToInt(hostTempo)) + " BPM"
+                                                                   + (timeFactor() < 1.0 ? " half-time" : timeFactor() > 1.0 ? " double-time" : "") + ".wav"));
     file.deleteFile();
     juce::WavAudioFormat wav;
     if (auto stream = std::unique_ptr<juce::OutputStream>(file.createOutputStream()))
@@ -268,9 +294,112 @@ juce::File EpsilonBounceProcessor::renderToFile(int loops)
 }
 
 //==============================================================================
+void EpsilonBounceProcessor::applyPreset(int index)
+{
+    if (index < 0 || index >= bounce::presetCount) return;
+    const auto& pr = bounce::presets[index];
+    auto set = [this](const char* id, float plain)
+    {
+        if (auto* p = state.getParameter(id))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(p->convertTo0to1(plain));
+            p->endChangeGesture();
+        }
+    };
+    set("groove", (float) pr.groove);
+    set("amount", pr.amount);
+    set("swing", pr.swing);
+    set("tighten", pr.tighten);
+    set("humanize", pr.humanizeMs);
+    set("accent", pr.accent);
+    set("feel", pr.feelMs);
+    set("time", (float) pr.time);
+    currentPreset = index;
+}
+
+void EpsilonBounceProcessor::setLearned(const bounce::GrooveTemplate& t, const LearnInfo& info)
+{
+    for (int i = 0; i < bounce::stepsPerBar; ++i)
+    {
+        learnedAtoms[(size_t) i].store(t.offset[(size_t) i], std::memory_order_relaxed);
+        learnedAtoms[(size_t) (i + bounce::stepsPerBar)].store(t.accentDb[(size_t) i], std::memory_order_relaxed);
+    }
+    { const juce::ScopedLock sl(loopLock); learnInfo = info; }
+    ++learnSerial;
+}
+
+juce::String EpsilonBounceProcessor::learnFromFile(const juce::File& file)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(file));
+    if (reader == nullptr) return "Can't read that file - try WAV, AIFF or FLAC.";
+    if (reader->sampleRate <= 0 || reader->lengthInSamples <= 0) return "That file is empty.";
+    if (reader->lengthInSamples > (juce::int64) (maxLoopSeconds * reader->sampleRate)) return "Reference loops up to 60 seconds, please.";
+    const int n = (int) reader->lengthInSamples;
+    juce::AudioBuffer<float> buf((int) juce::jmax(1u, juce::jmin(2u, reader->numChannels)), n);
+    reader->read(&buf, 0, n, 0, true, buf.getNumChannels() > 1);
+    std::vector<float> l(buf.getReadPointer(0), buf.getReadPointer(0) + n);
+    std::vector<float> r(buf.getReadPointer(buf.getNumChannels() - 1), buf.getReadPointer(buf.getNumChannels() - 1) + n);
+    const double sr = reader->sampleRate;
+    const auto name = file.getFileNameWithoutExtension();
+    bounce::AnalysisSettings a;
+    a.sensitivity = 0.6f;     // catch ghost notes: they carry most of a groove's feel
+    a.barsHint = barsChoices[juce::jlimit(0, 4, juce::roundToInt(pBars->load()))];
+    learning = true;
+    worker.addJob([this, l = std::move(l), r = std::move(r), sr, a, name]() mutable
+    {
+        auto ref = bounce::analyse(std::move(l), std::move(r), sr, a);
+        const auto res = bounce::learnGroove(*ref);
+        juce::MessageManager::callAsync([this, res, name, bpm = ref->bpm]
+        {
+            LearnInfo info { name, res.hits, res.stepsHeard, res.swingPercent, res.hits >= 4 };
+            if (info.valid)
+            {
+                setLearned(res.groove, info);
+                if (auto* p = state.getParameter("groove"))
+                {
+                    p->beginChangeGesture();
+                    p->setValueNotifyingHost(p->convertTo0to1((float) bounce::Groove::learned));
+                    p->endChangeGesture();
+                }
+                currentPreset = -1;
+            }
+            else
+            {
+                const juce::ScopedLock sl(loopLock);
+                learnInfo = info;
+                ++learnSerial;
+            }
+            juce::ignoreUnused(bpm);
+            learning = false;
+        });
+    });
+    return {};
+}
+
+//==============================================================================
 void EpsilonBounceProcessor::getStateInformation(juce::MemoryBlock& dest)
 {
     auto tree = state.copyState();
+    {
+        const auto t = readLearned();
+        const auto info = getLearnInfo();
+        if (info.valid)
+        {
+            juce::ValueTree lt("Learned");
+            juce::StringArray offs, accs;
+            for (int i = 0; i < bounce::stepsPerBar; ++i) { offs.add(juce::String(t.offset[(size_t) i], 5)); accs.add(juce::String(t.accentDb[(size_t) i], 3)); }
+            lt.setProperty("offsets", offs.joinIntoString(" "), nullptr);
+            lt.setProperty("accents", accs.joinIntoString(" "), nullptr);
+            lt.setProperty("name", info.name, nullptr);
+            lt.setProperty("hits", info.hits, nullptr);
+            lt.setProperty("steps", info.steps, nullptr);
+            lt.setProperty("swing", info.swingPercent, nullptr);
+            tree.appendChild(lt, nullptr);
+        }
+    }
     const juce::ScopedLock sl(loopLock);
     if (! rawL.empty())
     {
@@ -304,6 +433,24 @@ void EpsilonBounceProcessor::setStateInformation(const void* data, int size)
     if (! tree.isValid()) return;
     auto audio = tree.getChildWithName("Loop");
     if (audio.isValid()) tree.removeChild(audio, nullptr);
+    auto lt = tree.getChildWithName("Learned");
+    if (lt.isValid())
+    {
+        tree.removeChild(lt, nullptr);
+        juce::StringArray offs, accs;
+        offs.addTokens(lt.getProperty("offsets").toString(), " ", {});
+        accs.addTokens(lt.getProperty("accents").toString(), " ", {});
+        if (offs.size() == bounce::stepsPerBar && accs.size() == bounce::stepsPerBar)
+        {
+            bounce::GrooveTemplate t;
+            for (int i = 0; i < bounce::stepsPerBar; ++i)
+            {
+                t.offset[(size_t) i] = juce::jlimit(-0.5f, 0.5f, offs[i].getFloatValue());
+                t.accentDb[(size_t) i] = juce::jlimit(-6.0f, 6.0f, accs[i].getFloatValue());
+            }
+            setLearned(t, { lt.getProperty("name").toString(), (int) lt.getProperty("hits"), (int) lt.getProperty("steps"), (float) lt.getProperty("swing"), true });
+        }
+    }
     state.replaceState(tree);
     if (! audio.isValid()) return;
     if (auto* mb = audio.getProperty("flac").getBinaryData())

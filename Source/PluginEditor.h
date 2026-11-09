@@ -4,11 +4,12 @@
 
 // The hero: the loop's waveform under a 16th grid. Each hit shows where it was (hollow tick) and
 // where the groove puts it (champagne bar), joined by a short line - you see the bounce.
+// Drop a loop to load it; hold Alt (Option) while dropping to learn its groove instead.
 class GrooveGrid : public juce::Component, public juce::FileDragAndDropTarget
 {
 public:
     explicit GrooveGrid(EpsilonBounceProcessor& p) : proc(p) {}
-    std::function<void(const juce::File&)> onFileDropped;
+    std::function<void(const juce::File&, bool learn)> onFileDropped;
     void refresh(bool force);
     void paint(juce::Graphics&) override;
     void resized() override { cache = {}; }
@@ -23,7 +24,7 @@ private:
     std::vector<bounce::Placement> places;
     bounce::GrooveSettings lastG {};
     double lastBpm = 0.0;
-    int lastSerial = -1, lastPlaying = -2;
+    int lastSerial = -1, lastPlaying = -2, lastLearn = -1;
     bool dragOver = false;
     juce::Image cache;       // waveform + grid, redrawn only when the loop or size changes
     void renderCache();
@@ -40,14 +41,16 @@ public:
 private:
     EpsilonBounceProcessor& proc;
     epsilon_ui::LookAndFeel look { epsilon_ui::Tier::Epsilon };
-    epsilon_ui::HeaderBar header { epsilon_ui::Tier::Epsilon, "Bounce", juce::String (juce::CharPointer_UTF8 ("Dembow \xc2\xb7 drill \xc2\xb7 trap re-groover")) };
+    epsilon_ui::HeaderBar header { epsilon_ui::Tier::Epsilon, "Bounce", juce::String (juce::CharPointer_UTF8 ("Loop re-groover")) };
     epsilon_ui::FooterBar footer { epsilon_ui::Tier::Epsilon, JucePlugin_VersionString };
 
-    juce::TextButton loadButton { "Load loop" }, previewButton { "Preview" };
+    juce::TextButton loadButton { "Load loop" }, previewButton { "Preview" }, learnButton { "Learn groove" };
+    juce::TextButton prevPreset { "<" }, nextPreset { ">" };
+    juce::ComboBox presetBox;
     std::unique_ptr<juce::TextButton> dragOwned;   // drag-to-DAW source
-    juce::Label fileLabel;
     GrooveGrid grid { proc };
     epsilon_ui::ModeSwitch grooveSwitch { proc.state, "groove" };
+    epsilon_ui::ModeSwitch timeSwitch { proc.state, "time" };
     epsilon_ui::Knob amount { proc.state, "amount", "Amount", true };
     epsilon_ui::Knob swing { proc.state, "swing", "Swing" }, tighten { proc.state, "tighten", "Tighten" },
                      humanize { proc.state, "humanize", "Humanize" }, accent { proc.state, "accent", "Accent" },
@@ -58,12 +61,14 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> barsAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> syncAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::Rectangle<int> heroPanel, feelPanel, slicePanel;
-    juce::String message;
+    juce::Rectangle<int> heroPanel, feelPanel, slicePanel, learnInfoArea;
+    juce::String message, loopTitle;
+    int shownLearnSerial = -1;
 
-    void load(const juce::File& f);
+    void load(const juce::File& f, bool learn);
+    void chooseFile(bool learn);
+    void buildPresetMenu();
     void timerCallback() override;
-    void mouseDrag(const juce::MouseEvent&) override;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EpsilonBounceEditor)
 };

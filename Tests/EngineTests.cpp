@@ -15,21 +15,24 @@ static void check(bool ok, const std::string& what, double value = 0.0)
 }
 
 // A drum-ish loop: decaying noise bursts at the given 16th steps, silence between.
-static void makeLoop(double sr, double bpm, int bars, const std::vector<int>& steps, std::vector<float>& l, std::vector<float>& r)
+template <typename StepT>
+static void makeLoop(double sr, double bpm, int bars, const std::vector<StepT>& steps, std::vector<float>& l, std::vector<float>& r, const std::vector<float>& levels = {})
 {
     const int len = (int) std::lround(bars * 4 * 60.0 / bpm * sr);
     l.assign((size_t) len, 0.0f); r.assign((size_t) len, 0.0f);
     std::mt19937 rng(7);
     std::uniform_real_distribution<float> u(-1.0f, 1.0f);
     const double sps = len / (bars * 16.0);
-    for (auto st : steps)
+    for (size_t h = 0; h < steps.size(); ++h)
     {
+        const double st = (double) steps[h];
+        const float lvl = h < levels.size() ? levels[h] : 0.7f;
         const int at = (int) std::lround(st * sps);
         const int dur = (int) (0.06 * sr);
         for (int i = 0; i < dur && at + i < len; ++i)
         {
             const float env = std::exp(-(float) i / (float) (0.012 * sr));
-            l[(size_t) (at + i)] += 0.7f * env * u(rng);
+            l[(size_t) (at + i)] += lvl * env * u(rng);
             r[(size_t) (at + i)] = l[(size_t) (at + i)];
         }
     }
@@ -196,6 +199,88 @@ int main()
         const double ams = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a0).count();
         std::printf("PERF analyse 4 bars: %.1f ms (worker thread)\n", ams);
         check(ams < 2000.0 && d2->slices.size() > 0, "analysis of a 4-bar loop under 2 s", ams);
+    }
+
+    // ---- v1.1: every genre is distinct, bounded, and lands where its template says
+    {
+        std::vector<int> steps16; for (int i = 0; i < 32; ++i) steps16.push_back(i);   // a hit on every 16th, 2 bars
+        std::vector<float> l, r;
+        makeLoop(48000.0, 120.0, 2, steps16, l, r);
+        auto d = analyse(l, r, 48000.0, {});
+        check(d->slices.size() == 32, "16th-note loop: 32 slices", (double) d->slices.size());
+        bool allFinite = true, allDistinct = true; float peak = 0.0f;
+        std::vector<GrooveTemplate> seen;
+        for (int gi = 0; gi < grooveCount; ++gi)
+        {
+            if ((Groove) gi == Groove::learned) continue;
+            const auto t = grooveTemplate((Groove) gi);
+            for (const auto& o : seen) allDistinct &= (o != t);
+            seen.push_back(t);
+            GrooveSettings g; g.groove = (Groove) gi; g.amount = 1.5f; g.swing = 1.0f; g.accent = 1.0f; g.humanizeMs = 20.0f;
+            auto out = renderLoops(*d, g, 48000.0, 140.0, 2, 128);
+            for (auto v : out) { allFinite &= std::isfinite(v); peak = std::max(peak, std::abs(v)); }
+            // placements never jump past a neighbour's slot (no reordering beyond half a 16th)
+            for (int st = 0; st < 16; ++st)
+            {
+                const double off = (st & 1 ? t.swing : 0.0f) + t.offset[(size_t) st];
+                allFinite &= std::abs(off) < 0.5;
+            }
+        }
+        check(allDistinct, "all 13 genre templates are different from each other");
+        check(allFinite && peak < 1.6f, "every genre at max: finite, offsets under half a 16th, bounded level", 20.0 * std::log10(std::max(1e-9f, peak)));
+        check(grooveCount == 14 && std::string(grooveName(Groove::learned)) == "LEARNED", "14 groove slots, LEARNED last");
+        // spot-check two genres in rendered audio: boom bap's 58 % swing and lay-back snare
+        GrooveSettings bb; bb.groove = Groove::boomBap; bb.tighten = 1.0f; bb.accent = 0.0f;
+        Slice s1; s1.gridStep = 1.0; Slice s4; s4.gridStep = 4.0;
+        const auto tb = grooveTemplate(Groove::boomBap);
+        check(std::abs(place(s1, 1, bb, tb, 125.0).step - 1.16) < 1e-6, "boom bap: off-16th at MPC 58 %", place(s1, 1, bb, tb, 125.0).step);
+        check(std::abs(place(s4, 4, bb, tb, 125.0).step - 4.07) < 1e-6, "boom bap: backbeat snare laid back 0.07", place(s4, 4, bb, tb, 125.0).step);
+    }
+
+    // ---- v1.1: Groove Learn recovers a reference loop's feel
+    for (double sr : { 44100.0, 48000.0 })
+    {
+        const auto tag = std::string(sr == 44100.0 ? "[44.1k] " : "[48k] ");
+        // reference: 2 bars of 16ths, off-16ths swung 0.24 late, snare on 4 / 12 another 0.08 late and louder
+        std::vector<double> st; std::vector<float> lv;
+        for (int b = 0; b < 2; ++b)
+            for (int i = 0; i < 16; ++i)
+            {
+                double x = b * 16 + i + ((i & 1) ? 0.24 : 0.0) + ((i == 4 || i == 12) ? 0.08 : 0.0);
+                st.push_back(x); lv.push_back((i == 4 || i == 12) ? 0.9f : (i & 1) ? 0.35f : 0.6f);
+            }
+        std::vector<float> l, r;
+        makeLoop(sr, 95.0, 2, st, l, r, lv);
+        auto ref = analyse(l, r, sr, {});
+        auto learned = learnGroove(*ref);
+        check(learned.stepsHeard == 16 && learned.hits >= 30, tag + "learn: heard all 16 steps", learned.hits);
+        double worstOff = 0.0, worstSnare = 0.0;
+        for (int i = 1; i < 16; i += 2) worstOff = std::max(worstOff, std::abs(learned.groove.offset[(size_t) i] - 0.24));
+        for (int i : { 4, 12 }) worstSnare = std::max(worstSnare, std::abs(learned.groove.offset[(size_t) i] - 0.08));
+        check(worstOff < 0.03, tag + "learn: recovers the 0.24 swing (worst error, 16ths)", worstOff);
+        check(worstSnare < 0.03, tag + "learn: recovers the late snare (worst error, 16ths)", worstSnare);
+        check(learned.groove.accentDb[4] > 1.0f && learned.groove.accentDb[1] < -1.0f, tag + "learn: loud snare accented, quiet off-16ths ducked", learned.groove.accentDb[4]);
+        check(std::abs(learned.swingPercent - 62.0f) < 2.0f, tag + "learn: reports ~62 % swing", learned.swingPercent);
+
+        // apply the learned feel to a dead-straight loop and measure where the hits land
+        std::vector<int> straightSteps; for (int i = 0; i < 16; ++i) straightSteps.push_back(i);
+        std::vector<float> l2, r2;
+        makeLoop(sr, 120.0, 1, straightSteps, l2, r2);
+        auto target = analyse(l2, r2, sr, {});
+        GrooveSettings g; g.groove = Groove::learned; g.learned = learned.groove; g.tighten = 1.0f; g.accent = 0.0f;
+        auto out = renderLoops(*target, g, sr, 120.0, 1, 256);
+        auto on = findOnsets(out, sr);
+        const double hostSps = 60.0 / 120.0 / 4.0 * sr;
+        double worst = 0.0;
+        for (size_t i = 0; i < on.size() && i < 16; ++i)
+        {
+            const double want = (double) i + learned.groove.offset[i];
+            worst = std::max(worst, std::abs(on[i] / hostSps - want));
+        }
+        check(on.size() == 16 && worst < 0.03, tag + "learned feel applied to a straight loop (worst, 16ths)", worst);
+        // empty / tiny reference: no crash, flat template
+        auto empty = learnGroove(*analyse(std::vector<float>(48000, 0.0f), {}, sr, {}));
+        check(empty.hits == 0 && empty.groove == GrooveTemplate {}, tag + "learn: silent reference gives a flat groove");
     }
 
     // Bar guessing

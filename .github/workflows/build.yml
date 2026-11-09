@@ -62,7 +62,7 @@ jobs:
           cp -R "$(find build -type d -name 'Epsilon Bounce.app' | head -1)" out/
           cp snap/*.png out/ 2>/dev/null || true
           cat > out/INSTALL.txt <<'TXT'
-          Epsilon Bounce v1.0.0 (unsigned test build, Intel + Apple Silicon)
+          Epsilon Bounce v1.1.0 (unsigned test build, Intel + Apple Silicon)
           1. Copy "Epsilon Bounce.vst3" to ~/Library/Audio/Plug-Ins/VST3/
              and "Epsilon Bounce.component" to ~/Library/Audio/Plug-Ins/Components/
              ("Epsilon Bounce.app" is the standalone version - open it to try it without a DAW.)
@@ -76,5 +76,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Epsilon-Bounce-v1.0.0-macOS
+          name: Epsilon-Bounce-v1.1.0-macOS
           path: out

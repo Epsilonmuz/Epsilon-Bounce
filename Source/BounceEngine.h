@@ -22,18 +22,36 @@ constexpr int maxSlices = 1024;
 constexpr double pi = 3.14159265358979323846;
 
 //==============================================================================
-// Grooves. Offsets are in fractions of a 16th step (+ = later), gains in dB.
-enum class Groove { straight = 0, dembow, drill, trap, count };
+// Grooves. Offsets are in fractions of a 16th step (+ = later), accents in dB.
+// Order is the parameter's choice order: only ever append, so saved sessions keep their groove.
+enum class Groove
+{
+    straight = 0, dembow, drill, trap,                         // v1.0
+    reggaeton, afrobeats, amapiano, jerseyClub, boomBap,       // v1.1
+    ukGarage, lofi, bailefunk, phonk,
+    learned,                                                   // copied from a reference loop
+    count
+};
 constexpr int grooveCount = static_cast<int>(Groove::count);
 inline const char* grooveName(Groove g)
 {
     switch (g)
     {
-        case Groove::straight: return "STRAIGHT";
-        case Groove::dembow:   return "DEMBOW";
-        case Groove::drill:    return "DRILL";
-        case Groove::trap:     return "TRAP";
-        default:               return "";
+        case Groove::straight:   return "STRAIGHT";
+        case Groove::dembow:     return "DEMBOW";
+        case Groove::drill:      return "DRILL";
+        case Groove::trap:       return "TRAP";
+        case Groove::reggaeton:  return "REGGAETON";
+        case Groove::afrobeats:  return "AFROBEATS";
+        case Groove::amapiano:   return "AMAPIANO";
+        case Groove::jerseyClub: return "JERSEY";
+        case Groove::boomBap:    return "BOOM BAP";
+        case Groove::ukGarage:   return "UK GARAGE";
+        case Groove::lofi:       return "LO-FI";
+        case Groove::bailefunk:  return "BAILE FUNK";
+        case Groove::phonk:      return "PHONK";
+        case Groove::learned:    return "LEARNED";
+        default:                 return "";
     }
 }
 
@@ -42,27 +60,33 @@ struct GrooveTemplate
     std::array<float, stepsPerBar> offset {};   // fraction of a 16th
     std::array<float, stepsPerBar> accentDb {};
     float swing = 0.0f;                         // extra delay on off-16ths (fraction of a 16th)
+    bool operator==(const GrooveTemplate& o) const { return offset == o.offset && accentDb == o.accentDb && swing == o.swing; }
+    bool operator!=(const GrooveTemplate& o) const { return ! (*this == o); }
 };
+
+// MPC-style swing percentage (50 = straight, 66.7 = triplet) as a delay on off-16ths.
+constexpr float mpcSwing(float percent) { return (percent - 50.0f) / 50.0f; }
 
 inline GrooveTemplate grooveTemplate(Groove g)
 {
     GrooveTemplate t;
+    auto accents = [&t](std::initializer_list<int> steps, float db) { for (auto s : steps) t.accentDb[(size_t) s] = db; };
     switch (g)
     {
         case Groove::straight:
             break;
         case Groove::dembow:
-            // Dembow: kick on every beat, the snare "ch" on the a-of-1 and and-of-2 (steps 3, 6,
-            // 11, 14). Those hits lean late / early to get the bounce; off-16ths swing lightly.
+            // Kick on every beat, the "ch" on 16ths 3, 6, 11, 14: those lean late / early for the
+            // bounce; off-16ths swing lightly.
             t.swing = 0.10f;
             t.offset[3] = 0.10f;  t.offset[11] = 0.10f;
             t.offset[6] = -0.05f; t.offset[14] = -0.05f;
-            for (auto s : { 3, 6, 11, 14 }) t.accentDb[(size_t) s] = 1.5f;
-            for (auto s : { 1, 5, 9, 13 })  t.accentDb[(size_t) s] = -1.5f;
+            accents({ 3, 6, 11, 14 }, 1.5f);
+            accents({ 1, 5, 9, 13 }, -1.5f);
             break;
         case Groove::drill:
-            // UK / NY drill: heavily shuffled 16ths (about 62 % swing) with the half-time snare
-            // dragging a hair behind the beat, and the 16th before it pulled in.
+            // UK / NY drill: heavy 16th shuffle (~62 %), half-time snare dragging a hair, the 16th
+            // before it pulled in.
             t.swing = 0.24f;
             t.offset[8] = 0.04f;
             t.offset[7] = -0.04f; t.offset[15] = -0.04f;
@@ -70,11 +94,82 @@ inline GrooveTemplate grooveTemplate(Groove g)
             t.accentDb[8] = 1.0f;
             break;
         case Groove::trap:
-            // Trap: straight and tight; downbeats pushed a touch forward, off-16th hats just behind.
+            // Straight and tight; downbeats pushed a touch forward, off-8th hats just quieter.
             t.swing = 0.04f;
             for (int s = 0; s < stepsPerBar; s += 4) t.offset[(size_t) s] = -0.02f;
-            for (int s = 2; s < stepsPerBar; s += 4) t.accentDb[(size_t) s] = -1.0f;
+            accents({ 2, 6, 10, 14 }, -1.0f);
             t.accentDb[8] = 1.0f;
+            break;
+        case Groove::reggaeton:
+            // Dembow's cleaner commercial cousin: same 3 / 6 / 11 / 14 snare pattern, almost on the
+            // grid, accented harder, no 16th swing.
+            t.offset[3] = 0.04f;  t.offset[11] = 0.04f;
+            t.offset[6] = -0.02f; t.offset[14] = -0.02f;
+            accents({ 3, 6, 11, 14 }, 2.0f);
+            accents({ 1, 5, 9, 13 }, -2.5f);
+            break;
+        case Groove::afrobeats:
+            // Rolling 3-3-2 feel: 16ths 0, 3, 6 and 8, 11, 14 carry it; light swing, the 3s lay back,
+            // the 6s and 14s push.
+            t.swing = 0.16f;
+            t.offset[3] = 0.06f;  t.offset[11] = 0.06f;
+            t.offset[6] = -0.04f; t.offset[14] = -0.04f;
+            accents({ 0, 3, 6, 8, 11, 14 }, 1.5f);
+            accents({ 1, 9 }, -2.0f);
+            break;
+        case Groove::amapiano:
+            // Lazy shuffled shakers (~60 %), log-drum off-8ths (2, 6, 10, 14) laid back, the kick
+            // dead on the beat.
+            t.swing = mpcSwing(60.0f);
+            for (auto s : { 2, 6, 10, 14 }) t.offset[(size_t) s] = 0.08f;
+            accents({ 2, 6, 10, 14 }, 1.5f);
+            accents({ 1, 5, 9, 13 }, -1.5f);
+            break;
+        case Groove::jerseyClub:
+            // Straight, urgent: the 5-kick bounce (0, 4, 8, 10, 12) pushed early, everything else
+            // ducked so the kicks jump out.
+            t.swing = 0.03f;
+            for (auto s : { 4, 10, 12 }) t.offset[(size_t) s] = -0.04f;
+            accents({ 0, 4, 8, 10, 12 }, 2.0f);
+            accents({ 1, 3, 5, 7, 9, 11, 13, 15 }, -2.5f);
+            break;
+        case Groove::boomBap:
+            // MPC 58 % swing with the backbeat snare (4, 12) laid back like a live drummer.
+            t.swing = mpcSwing(58.0f);
+            t.offset[4] = 0.07f; t.offset[12] = 0.07f;
+            accents({ 4, 12 }, 1.5f);
+            accents({ 1, 5, 9, 13 }, -1.0f);
+            break;
+        case Groove::ukGarage:
+            // 2-step: heavy shuffle (~66 %), the skippy kick on 10 pulled early, the snares on 4 / 12
+            // a hair late.
+            t.swing = mpcSwing(66.0f);
+            t.offset[10] = -0.05f;
+            t.offset[4] = 0.03f; t.offset[12] = 0.03f;
+            accents({ 4, 12 }, 1.0f);
+            accents({ 3, 7, 11, 15 }, -2.0f);
+            break;
+        case Groove::lofi:
+            // Drunk and late: soft swing, everything except the downbeat drags, accents flattened.
+            t.swing = mpcSwing(57.0f);
+            for (int s = 1; s < stepsPerBar; ++s) t.offset[(size_t) s] = s % 4 == 0 ? 0.08f : 0.05f;
+            for (int s = 0; s < stepsPerBar; ++s) t.accentDb[(size_t) s] = s % 4 == 0 ? 0.0f : -1.5f;
+            break;
+        case Groove::bailefunk:
+            // Tamborzao: hits on 0, 3, 6, 10, 12 - the 3 and 10 rush, the 6 sits back.
+            t.swing = 0.05f;
+            t.offset[3] = -0.04f; t.offset[10] = -0.04f;
+            t.offset[6] = 0.05f;
+            accents({ 0, 3, 6, 10, 12 }, 2.0f);
+            accents({ 1, 5, 9, 13 }, -2.0f);
+            break;
+        case Groove::phonk:
+            // Memphis cowbell bounce: medium swing, half-time snare on 8 heavy and late.
+            t.swing = mpcSwing(56.0f);
+            t.offset[8] = 0.06f;
+            accents({ 8 }, 2.0f);
+            accents({ 2, 6, 10, 14 }, 1.0f);
+            accents({ 1, 3, 5, 7, 9, 11, 13, 15 }, -1.5f);
             break;
         default: break;
     }
@@ -301,7 +396,78 @@ struct GrooveSettings
     float accent = 0.75f;      // 0..1 applies the template's accents
     float feelMs = 0.0f;       // -20..+20 whole-loop push / lay back
     std::uint32_t seed = 0x5eed;
+    GrooveTemplate learned {}; // used when groove == learned
 };
+
+inline GrooveTemplate templateFor(const GrooveSettings& g)
+{
+    return g.groove == Groove::learned ? g.learned : grooveTemplate(g.groove);
+}
+
+//==============================================================================
+// Groove Learn: read a reference loop's microtiming and accents into a template.
+// For every 16th of the bar, the average distance of the reference's hits from the grid becomes
+// that step's offset; their average level (relative to the loop) becomes its accent. Steps the
+// reference never hits borrow the average of steps with the same role (downbeat / 8th / 16th),
+// so its swing still carries over.
+
+struct LearnResult
+{
+    GrooveTemplate groove;
+    int hits = 0;              // reference hits that were used
+    int stepsHeard = 0;        // how many of the 16 steps the reference actually played
+    float swingPercent = 50.0f;// the reference's off-16th swing as an MPC-style percentage
+};
+
+inline LearnResult learnGroove(const LoopData& ref)
+{
+    LearnResult r;
+    if (ref.slices.size() < 2) return r;
+    std::array<double, stepsPerBar> sumDev {}, sumLevel {};
+    std::array<int, stepsPerBar> count {};
+    double allLevel = 0.0;
+    int used = 0;
+    for (const auto& s : ref.slices)
+    {
+        const double q = std::round(s.gridStep);
+        const double dev = s.gridStep - q;
+        if (std::abs(dev) > 0.45) continue;            // ambiguous: halfway between two 16ths
+        const int step = (((int) q % stepsPerBar) + stepsPerBar) % stepsPerBar;
+        sumDev[(size_t) step] += dev;
+        sumLevel[(size_t) step] += std::max(1e-4f, s.peak);
+        allLevel += std::max(1e-4f, s.peak);
+        ++count[(size_t) step];
+        ++used;
+    }
+    if (used < 2) return r;
+    allLevel /= used;
+    // role averages: 0 = quarter, 1 = off-8th, 2 = off-16th
+    auto role = [](int s) { return s % 4 == 0 ? 0 : s % 2 == 0 ? 1 : 2; };
+    std::array<double, 3> roleDev {}; std::array<int, 3> roleN {};
+    for (int s = 0; s < stepsPerBar; ++s)
+        if (count[(size_t) s] > 0) { roleDev[(size_t) role(s)] += sumDev[(size_t) s] / count[(size_t) s]; ++roleN[(size_t) role(s)]; }
+    for (int s = 0; s < stepsPerBar; ++s)
+    {
+        if (count[(size_t) s] > 0)
+        {
+            r.groove.offset[(size_t) s] = (float) (sumDev[(size_t) s] / count[(size_t) s]);
+            const double lvl = sumLevel[(size_t) s] / count[(size_t) s];
+            r.groove.accentDb[(size_t) s] = (float) std::clamp(20.0 * std::log10(lvl / allLevel) * 0.5, -6.0, 6.0);
+            ++r.stepsHeard;
+        }
+        else
+        {
+            const int k = role(s);
+            r.groove.offset[(size_t) s] = roleN[(size_t) k] > 0 ? (float) (roleDev[(size_t) k] / roleN[(size_t) k]) : 0.0f;
+        }
+    }
+    // Express the off-16th lean as a swing figure for the display (the offsets already carry it).
+    const double off = roleN[2] > 0 ? roleDev[2] / roleN[2] : 0.0;
+    const double on = (roleN[0] + roleN[1]) > 0 ? (roleDev[0] + roleDev[1]) / (roleN[0] + roleN[1]) : 0.0;
+    r.swingPercent = (float) std::clamp(50.0 + (off - on) * 50.0, 0.0, 100.0);
+    r.hits = used;
+    return r;
+}
 
 struct Placement
 {
@@ -353,7 +519,7 @@ public:
     // Recompute placements for this loop at this tempo. Allocation-free: vectors were sized in prepare().
     void update(const LoopData& d, const GrooveSettings& g, double bpm)
     {
-        const auto t = grooveTemplate(g.groove);
+        const auto t = templateFor(g);
         const double msPerStep = 60000.0 / std::max(20.0, bpm) / 4.0;
         count = std::min((int) d.slices.size(), maxSlices);
         loopSteps = d.bars * stepsPerBar;
