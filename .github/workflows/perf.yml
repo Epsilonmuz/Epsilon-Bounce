@@ -1,0 +1,24 @@
+name: Performance (Intel + Apple Silicon)
+
+# Times the audio engine against the real-time budget on an Intel Mac (like a 2019 MacBook Pro)
+# and on Apple Silicon. Fails if playback costs more than 2 % of a core.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ 'Source/BounceEngine.h', 'Tests/EngineTests.cpp', '.github/workflows/perf.yml' ]
+
+jobs:
+  perf:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-15-intel, macos-15 ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Engine timing
+        run: |
+          clang++ -std=c++17 -O3 -ISource Tests/EngineTests.cpp -o engine_tests
+          ./engine_tests | tee result.txt
+          grep PERF result.txt >> "$GITHUB_STEP_SUMMARY"

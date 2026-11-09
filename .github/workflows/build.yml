@@ -1,0 +1,80 @@
+name: Build Epsilon Bounce (macOS)
+
+# Public repository: macOS minutes are free, so every push to main builds and tests.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get JUCE 9.0.5
+        run: |
+          if [ ! -f JUCE/CMakeLists.txt ]; then
+            git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git JUCE
+          fi
+
+      - name: Projucer project is optimised in every config (Xcode Build/Run uses Debug)
+        run: |
+          if grep -n 'optimisation="1"' Epsilon-Bounce.jucer; then echo "::error::-O0 config in Epsilon-Bounce.jucer"; exit 1; fi
+          if [ -f Builds/MacOSX/*.xcodeproj/project.pbxproj ] && grep -n 'GCC_OPTIMIZATION_LEVEL = 0' Builds/MacOSX/*.xcodeproj/project.pbxproj; then
+            echo "::error::Builds/MacOSX has an unoptimised (-O0) configuration"; exit 1; fi
+
+      - name: Configure (universal, macOS 12.0)
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DBOUNCE_BUILD_BENCH=ON
+
+      - name: Build VST3, AU, Standalone, tests and host bench
+        run: cmake --build build --config Release --target EpsilonBounce_VST3 EpsilonBounce_AU EpsilonBounce_Standalone BounceEngineTests BounceBench -- -quiet
+
+      - name: Engine tests (44.1 / 48 kHz, timing, speed)
+        run: (cd build && ctest -C Release --output-on-failure)
+
+      - name: Host bench (loads a loop, plays at 140 BPM, state round-trip, drag-out, UI snapshot)
+        run: |
+          mkdir -p snap
+          "$(find build -type f -name BounceBench -perm -u+x | head -1)" snap
+
+      - name: auval (Audio Unit validation)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$(find build -type d -name 'Epsilon Bounce.component' | head -1)" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -v aumu EpBn EpsS
+
+      - name: pluginval (strictness 8)
+        run: |
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          VST3=$(find build -type d -name "Epsilon Bounce.vst3" | head -1)
+          ./pluginval.app/Contents/MacOS/pluginval --strictness-level 8 --sample-rates 44100,48000 --validate-in-process --skip-gui-tests "$VST3"
+
+      - name: Package
+        run: |
+          mkdir -p out
+          cp -R "$(find build -type d -name 'Epsilon Bounce.vst3' | head -1)" out/
+          cp -R "$(find build -type d -name 'Epsilon Bounce.component' | head -1)" out/
+          cp -R "$(find build -type d -name 'Epsilon Bounce.app' | head -1)" out/
+          cp snap/*.png out/ 2>/dev/null || true
+          cat > out/INSTALL.txt <<'TXT'
+          Epsilon Bounce v1.0.0 (unsigned test build, Intel + Apple Silicon)
+          1. Copy "Epsilon Bounce.vst3" to ~/Library/Audio/Plug-Ins/VST3/
+             and "Epsilon Bounce.component" to ~/Library/Audio/Plug-Ins/Components/
+             ("Epsilon Bounce.app" is the standalone version - open it to try it without a DAW.)
+          2. This build is not notarised. Remove the download quarantine in Terminal:
+             xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Epsilon Bounce.vst3"
+             xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Epsilon Bounce.component"
+             xattr -dr com.apple.quarantine "Epsilon Bounce.app"
+          3. FL Studio: Options > Manage plugins > Find installed plugins. It's under Generators / Instruments.
+             Load it on a channel, drop a loop on the grid, press play.
+          TXT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Epsilon-Bounce-v1.0.0-macOS
+          path: out
