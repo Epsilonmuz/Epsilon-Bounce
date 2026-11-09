@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="EBnc01" name="Epsilon Bounce" projectType="audioplug" version="1.1.0"
+<JUCERPROJECT id="EBnc01" name="Epsilon Bounce" projectType="audioplug" version="1.2.0"
               companyName="Epsilon Sounds" bundleIdentifier="com.epsilonsounds.bounce"
               pluginName="Epsilon Bounce" pluginDesc="Re-grooves audio loops to dembow, drill and trap pockets"
               pluginManufacturer="Epsilon Sounds" pluginManufacturerCode="EpsS"

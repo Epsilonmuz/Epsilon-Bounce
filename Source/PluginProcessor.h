@@ -53,7 +53,10 @@ public:
     // Groove Learn: copy a reference loop's feel into the LEARNED groove (message thread).
     juce::String learnFromFile(const juce::File& file);     // returns an error, empty on success (runs async)
     bool isLearning() const { return learning.load(); }
-    struct LearnInfo { juce::String name; int hits = 0, steps = 0; float swingPercent = 50.0f; bool valid = false; };
+    struct LearnInfo { juce::String name; int hits = 0, steps = 0; float swingPercent = 50.0f; bool valid = false;
+                       std::array<bool, bounce::stepsPerBar> heard {}; };
+    bounce::Material material() const;
+    bool holdActive() const;                                // Hold resolved (AUTO = on for melodic / grid)
     LearnInfo getLearnInfo() const { const juce::ScopedLock sl(loopLock); return learnInfo; }
     int getLearnSerial() const { return learnSerial.load(); }
 
@@ -75,7 +78,8 @@ private:
     std::atomic<bool> analysing { false };
     std::atomic<int> loopSerial { 0 };
     juce::ThreadPool worker { 1 };
-    float lastSensitivity = -1.0f; int lastBars = -1;
+    juce::String lastSliceKey;                               // re-analyse when any slicing control changes
+    juce::String sliceKey() const;
     int currentPreset = -1;
 
     // learned groove, readable from the audio thread without locks
@@ -100,7 +104,8 @@ private:
     std::atomic<float>* pGroove; std::atomic<float>* pAmount; std::atomic<float>* pSwing; std::atomic<float>* pTighten;
     std::atomic<float>* pHumanize; std::atomic<float>* pAccent; std::atomic<float>* pFeel; std::atomic<float>* pOutput;
     std::atomic<float>* pSync; std::atomic<float>* pTempo; std::atomic<float>* pSensitivity; std::atomic<float>* pBars;
-    std::atomic<float>* pTime;
+    std::atomic<float>* pTime; std::atomic<float>* pMaterial; std::atomic<float>* pChop; std::atomic<float>* pHold;
+    std::atomic<float>* pShift; std::atomic<float>* pAlign;
 
     void setRawAudio(std::vector<float> l, std::vector<float> r, double sr, const juce::String& name);
     void startAnalysis();

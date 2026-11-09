@@ -238,10 +238,85 @@ int main(int argc, char** argv)
             for (int i = 0; i < 200 && q2.isAnalysing(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
         }
 
+
+        // ---- v1.2: melodies, grid chops, hold, shift, align
+        {
+            const double bpm = 100.0;
+            const int len = (int) std::lround(8 * 60.0 / bpm * sr);
+            const double lsps = len / 32.0;
+            auto hz = [](double m) { return 440.0 * std::pow(2.0, (m - 69.0) / 12.0); };
+            const int chg[] { 0, 6, 8, 14, 16, 22, 24, 30 };
+            const int ch[8][3] { {57,60,64}, {53,57,60}, {48,52,55}, {55,59,62}, {57,60,64}, {53,57,60}, {48,52,55}, {55,59,62} };
+            juce::AudioBuffer<float> mb(2, len); mb.clear();
+            const int xfl = (int) (0.012 * sr);
+            for (int c = 0; c < 8; ++c)
+            {
+                const int a = (int) std::lround(chg[c] * lsps), b = c < 7 ? (int) std::lround(chg[c + 1] * lsps) : len;
+                for (int i = juce::jmax(0, a - xfl); i < juce::jmin(len, b + xfl); ++i)
+                {
+                    float w = 1.0f;
+                    if (i < a + xfl && c > 0) w = juce::jlimit(0.0f, 1.0f, (float) (i - (a - xfl)) / (2.0f * xfl));
+                    if (i > b - xfl && c < 7) w *= juce::jlimit(0.0f, 1.0f, (float) ((b + xfl) - i) / (2.0f * xfl));
+                    float v = 0.0f; for (int m : ch[c]) v += (float) std::sin(2.0 * juce::MathConstants<double>::pi * hz(m) * i / sr);
+                    for (int k = 0; k < 2; ++k) mb.addSample(k, i, 0.18f * w * v);
+                }
+            }
+            auto mf = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-chords.wav");
+            mf.deleteFile();
+            { juce::WavAudioFormat wav; std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(mf.createOutputStream().release(), sr, 2, 24, {}, 0)); w->writeFromAudioSampleBuffer(mb, 0, len); }
+
+            auto setChoice = [&p](const char* id, float v) { auto* q = p.state.getParameter(id); q->setValueNotifyingHost(q->convertTo0to1(v)); };
+            setChoice("material", 1.0f);                       // MELODIC
+            int ser = p.getLoopSerial();
+            check(p.loadFile(mf).isEmpty() && waitForLoop(p, ser), tag + "melodic: loads a chord loop");
+            check(p.getLoop() && p.getLoop()->slices.size() == 8, tag + "melodic: 8 chord changes -> 8 slices (" + juce::String(p.getLoop() ? (int) p.getLoop()->slices.size() : 0) + ")");
+            check(p.holdActive(), tag + "hold AUTO is on for melodic material");
+            setChoice("material", 2.0f);                       // GRID
+            ser = p.getLoopSerial();
+            for (int i = 0; i < 400 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            check(p.getLoop() && p.getLoop()->slices.size() == 32, tag + "grid: re-cuts into 32 16th chops when switched (" + juce::String(p.getLoop() ? (int) p.getLoop()->slices.size() : 0) + ")");
+            setChoice("chop", 1.0f);                           // 8ths
+            ser = p.getLoopSerial();
+            for (int i = 0; i < 400 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            check(p.getLoop() && p.getLoop()->slices.size() == 16, tag + "grid: 8th chops -> 16 slices");
+            setChoice("hold", 2.0f);
+            check(! p.holdActive(), tag + "hold OFF overrides AUTO");
+            setChoice("hold", 0.0f);
+            setChoice("material", 0.0f);
+            check(! p.holdActive(), tag + "hold AUTO is off for drums");
+
+            // melodic + hold through the real plugin, half-time: no gaps, no clicks
+            setChoice("material", 1.0f);
+            ser = p.getLoopSerial();
+            for (int i = 0; i < 400 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            p.applyPreset(0);
+            setChoice("time", 1.0f);
+            p.prepareToPlay(sr, 256);
+            auto held = play(p, head, sr, 16.0);
+            float minRms = 1.0f, jump = 0.0f;
+            const int win = (int) (0.02 * sr);
+            for (int i = win; i + win < held.getNumSamples(); i += win) minRms = juce::jmin(minRms, held.getRMSLevel(0, i, win));
+            for (int i = 1; i < held.getNumSamples(); ++i) jump = juce::jmax(jump, std::abs(held.getSample(0, i) - held.getSample(0, i - 1)));
+            check(minRms > 0.05f, tag + "half-time chords with Hold: no gaps (quietest 20 ms RMS " + juce::String(minRms, 3) + ")");
+            check(jump < 0.08f, tag + "half-time chords with Hold: no clicks (largest jump " + juce::String(jump, 3) + ")");
+            setChoice("time", 0.0f);
+            setChoice("material", 0.0f);
+            ser = p.getLoopSerial();
+            for (int i = 0; i < 400 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+        }
+
         if (sr == 48000.0 && snapDir != juce::File())
         {
             snapDir.createDirectory();
-            p.applyPreset(3);                      // Dembow Clasico
+            {
+                auto* q = p.state.getParameter("material"); q->setValueNotifyingHost(q->convertTo0to1(1.0f));
+                const int ser = p.getLoopSerial();
+                p.loadFile(juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-chords.wav"));
+                waitForLoop(p, ser);
+                p.applyPreset(3);
+                auto* gq = p.state.getParameter("groove"); gq->setValueNotifyingHost(gq->convertTo0to1((float) bounce::Groove::learned));
+                for (int i = 0; i < 20; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            }
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
             ed->setSize(960, 600);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(40);

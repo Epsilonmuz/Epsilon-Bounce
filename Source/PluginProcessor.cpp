@@ -30,6 +30,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout EpsilonBounceProcessor::crea
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "sensitivity", 1 }, "Sensitivity", NormalisableRange<float>(0.0f, 100.0f, 1.0f), 50.0f, attr(pct)));
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "bars", 1 }, "Bars", StringArray { "Auto", "1 bar", "2 bars", "4 bars", "8 bars" }, 0));
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "time", 2 }, "Time", StringArray { "NORMAL", "HALF-TIME", "DOUBLE-TIME" }, 0));
+    // v1.2: melodies and flipped samples
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "material", 3 }, "Cut On", StringArray { "DRUMS", "MELODIC", "GRID" }, 0));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "chop", 3 }, "Grid Chop", StringArray { "16TH", "8TH", "BEAT" }, 0));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "hold", 3 }, "Hold", StringArray { "AUTO", "ON", "OFF" }, 0));
+    l.add(std::make_unique<AudioParameterInt>(ParameterID { "shift", 3 }, "Shift", -8, 8, 0,
+                                              AudioParameterIntAttributes().withStringFromValueFunction([](int v, int) { return v == 0 ? juce::String("0") : (v > 0 ? "+" : "") + juce::String(v) + " /16"; })));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "align", 3 }, "Auto-Align", true));
     return l;
 }
 
@@ -44,6 +51,8 @@ EpsilonBounceProcessor::EpsilonBounceProcessor()
     pSync = state.getRawParameterValue("sync");         pTempo = state.getRawParameterValue("tempo");
     pSensitivity = state.getRawParameterValue("sensitivity"); pBars = state.getRawParameterValue("bars");
     pTime = state.getRawParameterValue("time");
+    pMaterial = state.getRawParameterValue("material"); pChop = state.getRawParameterValue("chop"); pHold = state.getRawParameterValue("hold");
+    pShift = state.getRawParameterValue("shift"); pAlign = state.getRawParameterValue("align");
     for (auto& a : learnedAtoms) a.store(0.0f);
     startTimerHz(10);
 }
@@ -77,7 +86,27 @@ bounce::GrooveSettings EpsilonBounceProcessor::readGroove() const
     g.accent = pAccent->load(std::memory_order_relaxed) * 0.01f;
     g.feelMs = pFeel->load(std::memory_order_relaxed);
     if (g.groove == bounce::Groove::learned) g.learned = readLearned();
+    g.shiftSteps = juce::roundToInt(pShift->load(std::memory_order_relaxed));
+    g.hold = holdActive();
+    g.softCuts = material() != bounce::Material::drums;
     return g;
+}
+
+bounce::Material EpsilonBounceProcessor::material() const
+{
+    return (bounce::Material) juce::jlimit(0, 2, juce::roundToInt(pMaterial->load(std::memory_order_relaxed)));
+}
+
+bool EpsilonBounceProcessor::holdActive() const
+{
+    const int h = juce::roundToInt(pHold->load(std::memory_order_relaxed));
+    return h == 1 || (h == 0 && material() != bounce::Material::drums);
+}
+
+juce::String EpsilonBounceProcessor::sliceKey() const
+{
+    return juce::String(juce::roundToInt(pSensitivity->load())) + "|" + juce::String(juce::roundToInt(pBars->load())) + "|"
+         + juce::String((int) material()) + "|" + juce::String(juce::roundToInt(pChop->load())) + "|" + juce::String(pAlign->load() >= 0.5f ? 1 : 0);
 }
 
 bounce::GrooveTemplate EpsilonBounceProcessor::readLearned() const
@@ -105,7 +134,7 @@ double EpsilonBounceProcessor::playbackBpm() const
 
 static bool sameSettings(const bounce::GrooveSettings& a, const bounce::GrooveSettings& b)
 {
-    return a.groove == b.groove && a.amount == b.amount && a.swing == b.swing && a.tighten == b.tighten
+    return a.shiftSteps == b.shiftSteps && a.hold == b.hold && a.softCuts == b.softCuts && a.groove == b.groove && a.amount == b.amount && a.swing == b.swing && a.tighten == b.tighten
         && a.humanizeMs == b.humanizeMs && a.accent == b.accent && a.feelMs == b.feelMs && a.learned == b.learned;
 }
 
@@ -216,7 +245,10 @@ void EpsilonBounceProcessor::startAnalysis()
     bounce::AnalysisSettings a;
     a.sensitivity = pSensitivity->load() * 0.01f;
     a.barsHint = barsChoices[juce::jlimit(0, 4, juce::roundToInt(pBars->load()))];
-    lastSensitivity = pSensitivity->load(); lastBars = juce::roundToInt(pBars->load());
+    a.material = material();
+    a.gridDiv = juce::roundToInt(pChop->load()) == 2 ? 4 : juce::roundToInt(pChop->load()) == 1 ? 2 : 1;
+    a.autoAlign = pAlign->load() >= 0.5f;
+    lastSliceKey = sliceKey();
     analysing = true;
     worker.addJob([this, l = std::move(l), r = std::move(r), sr, a]() mutable
     {
@@ -248,12 +280,12 @@ void EpsilonBounceProcessor::timerCallback()
         retired.erase(std::remove_if(retired.begin(), retired.end(), [busy](const auto& p) { return p.get() != busy; }), retired.end());
     }
     // Slicing controls changed: re-analyse (debounced by the 10 Hz timer)
-    if (! analysing.load() && (std::abs(pSensitivity->load() - lastSensitivity) > 0.5f || juce::roundToInt(pBars->load()) != lastBars))
+    if (! analysing.load() && sliceKey() != lastSliceKey)
     {
         bool have;
         { const juce::ScopedLock sl(loopLock); have = ! rawL.empty(); }
         if (have) startAnalysis();
-        else { lastSensitivity = pSensitivity->load(); lastBars = juce::roundToInt(pBars->load()); }
+        else lastSliceKey = sliceKey();
     }
 }
 
@@ -354,7 +386,7 @@ juce::String EpsilonBounceProcessor::learnFromFile(const juce::File& file)
         const auto res = bounce::learnGroove(*ref);
         juce::MessageManager::callAsync([this, res, name, bpm = ref->bpm]
         {
-            LearnInfo info { name, res.hits, res.stepsHeard, res.swingPercent, res.hits >= 4 };
+            LearnInfo info { name, res.hits, res.stepsHeard, res.swingPercent, res.hits >= 4, res.heard };
             if (info.valid)
             {
                 setLearned(res.groove, info);
@@ -397,6 +429,8 @@ void EpsilonBounceProcessor::getStateInformation(juce::MemoryBlock& dest)
             lt.setProperty("hits", info.hits, nullptr);
             lt.setProperty("steps", info.steps, nullptr);
             lt.setProperty("swing", info.swingPercent, nullptr);
+            juce::String heard; for (auto h : info.heard) heard << (h ? "1" : "0");
+            lt.setProperty("heard", heard, nullptr);
             tree.appendChild(lt, nullptr);
         }
     }
@@ -448,7 +482,10 @@ void EpsilonBounceProcessor::setStateInformation(const void* data, int size)
                 t.offset[(size_t) i] = juce::jlimit(-0.5f, 0.5f, offs[i].getFloatValue());
                 t.accentDb[(size_t) i] = juce::jlimit(-6.0f, 6.0f, accs[i].getFloatValue());
             }
-            setLearned(t, { lt.getProperty("name").toString(), (int) lt.getProperty("hits"), (int) lt.getProperty("steps"), (float) lt.getProperty("swing"), true });
+            LearnInfo li { lt.getProperty("name").toString(), (int) lt.getProperty("hits"), (int) lt.getProperty("steps"), (float) lt.getProperty("swing"), true, {} };
+            const auto heard = lt.getProperty("heard").toString();
+            for (int i = 0; i < bounce::stepsPerBar && i < heard.length(); ++i) li.heard[(size_t) i] = heard[i] == '1';
+            setLearned(t, li);
         }
     }
     state.replaceState(tree);

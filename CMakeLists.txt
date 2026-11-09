@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(EpsilonBounce VERSION 1.1.0 LANGUAGES C CXX)
+project(EpsilonBounce VERSION 1.2.0 LANGUAGES C CXX)
 
 # macOS: 12.0 target and JUCE 9.0.5 (bundled in ./JUCE in the Projucer package; CI clones it).
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
@@ -73,6 +73,6 @@ if(BOUNCE_BUILD_BENCH)
     target_include_directories(BounceBench PRIVATE Source Shared/epsilon_ui)
     target_compile_features(BounceBench PRIVATE cxx_std_17)
     target_compile_definitions(BounceBench PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
-        JucePlugin_VersionString="1.1.0" JucePlugin_Name="Epsilon Bounce")
+        JucePlugin_VersionString="1.2.0" JucePlugin_Name="Epsilon Bounce")
     target_link_libraries(BounceBench PRIVATE BounceAssets juce::juce_audio_utils juce::juce_recommended_config_flags)
 endif()

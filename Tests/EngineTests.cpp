@@ -283,6 +283,135 @@ int main()
         check(empty.hits == 0 && empty.groove == GrooveTemplate {}, tag + "learn: silent reference gives a flat groove");
     }
 
+    // ---- v1.2: melodies and flipped samples
+    for (double sr : { 44100.0, 48000.0 })
+    {
+        const auto tag = std::string(sr == 44100.0 ? "[44.1k] " : "[48k] ");
+        const double bpm = 100.0;
+        const int len = (int) std::lround(8 * 60.0 / bpm * sr);          // 2 bars
+        const double sps = len / 32.0;
+        auto midiHz = [](double m) { return 440.0 * std::pow(2.0, (m - 69.0) / 12.0); };
+        // smooth chord changes, no attacks: Am - F - C - G on syncopated 16ths, 12 ms crossfades
+        const std::vector<int> changeSteps { 0, 6, 8, 14, 16, 22, 24, 30 };
+        const std::vector<std::vector<int>> chords { {57,60,64}, {53,57,60}, {48,52,55}, {55,59,62}, {57,60,64}, {53,57,60}, {48,52,55}, {55,59,62} };
+        std::vector<float> l((size_t) len, 0.0f);
+        const int xf = (int) (0.012 * sr);
+        for (size_t c = 0; c < changeSteps.size(); ++c)
+        {
+            const int a = (int) std::lround(changeSteps[c] * sps), b = c + 1 < changeSteps.size() ? (int) std::lround(changeSteps[c + 1] * sps) : len;
+            for (int i = std::max(0, a - xf); i < std::min(len, b + xf); ++i)
+            {
+                float w = 1.0f;
+                if (i < a + xf && c > 0) w = std::clamp((float) (i - (a - xf)) / (2.0f * xf), 0.0f, 1.0f);
+                if (i > b - xf && c + 1 < changeSteps.size()) w *= std::clamp((float) ((b + xf) - i) / (2.0f * xf), 0.0f, 1.0f);
+                float v = 0.0f;
+                for (int m : chords[c]) v += (float) std::sin(2.0 * pi * midiHz(m) * i / sr);
+                l[(size_t) i] += 0.18f * w * v;
+            }
+        }
+        AnalysisSettings mel; mel.material = Material::melodic;
+        auto dm = analyse(l, l, sr, mel);
+        // each change is a 24 ms crossfade centred on its 16th; a good cut sits between 10 ms before the
+        // crossfade starts and the moment it ends (cutting at its start keeps the new chord's onset)
+        double worst = 0.0; int found = 0;
+        for (int st : changeSteps)
+        {
+            double best = 1e9;
+            for (const auto& sl : dm->slices)
+            {
+                const double dms = (sl.onset - st * sps) / sr * 1000.0;     // + = after the centre
+                // +-6 ms: one 5.8 ms analysis hop plus the snap to a zero crossing
+                const double outside = dms < -28.0 ? -28.0 - dms : dms > 18.0 ? dms - 18.0 : 0.0;
+                best = std::min(best, st == 0 ? std::abs(dms) : outside);
+            }
+            if (best == 0.0) ++found;
+            worst = std::max(worst, best);
+        }
+        check(found == (int) changeSteps.size() && (int) dm->slices.size() == (int) changeSteps.size(),
+              tag + "melodic: finds all 8 smooth chord changes, no extras (" + std::to_string(dm->slices.size()) + " slices)", (double) found);
+        check(worst == 0.0, tag + "melodic: every cut inside its chord crossfade (ms outside, worst)", worst);
+        AnalysisSettings drm;
+        auto dd = analyse(l, l, sr, drm);
+        check(dd->slices.size() < 4, tag + "drums mode finds no hits in the same smooth chords (" + std::to_string(dd->slices.size()) + ")");
+
+        // one held note with vibrato: melodic must not split it
+        std::vector<float> vib((size_t) len);
+        double ph = 0.0;
+        for (int i = 0; i < len; ++i) { const double f = midiHz(64) * std::pow(2.0, 0.3 / 12.0 * std::sin(2.0 * pi * 5.5 * i / sr)); ph += 2.0 * pi * f / sr; vib[(size_t) i] = 0.4f * (float) std::sin(ph); }
+        auto dv = analyse(vib, vib, sr, mel);
+        check(dv->slices.size() == 1, tag + "melodic: a note with vibrato stays one slice (" + std::to_string(dv->slices.size()) + ")");
+
+        // grid: chops every 16th / 8th, each cut on a zero crossing
+        AnalysisSettings g16; g16.material = Material::grid; g16.autoAlign = false;
+        auto dg = analyse(l, l, sr, g16);
+        bool zc = true;
+        for (size_t k = 1; k < dg->slices.size(); ++k)
+        {
+            const int c = dg->slices[k].onset;
+            zc &= (l[(size_t) c - 1] <= 0.0f) != (l[(size_t) c] <= 0.0f) || std::abs(l[(size_t) c]) < 0.02f;
+        }
+        check(dg->slices.size() == 32, tag + "grid 16ths: 32 chops in 2 bars", (double) dg->slices.size());
+        check(zc, tag + "grid: every cut lands on a zero crossing");
+        AnalysisSettings g8 = g16; g8.gridDiv = 2;
+        check(analyse(l, l, sr, g8)->slices.size() == 16, tag + "grid 8ths: 16 chops");
+
+        // auto-align: a drum loop whose every hit is 25 ms late
+        std::vector<int> st; for (int i = 0; i < 32; i += 2) st.push_back(i);
+        std::vector<float> dl, dr;
+        std::vector<double> late; for (int x : st) late.push_back(x + 0.025 / (60.0 / bpm / 4.0));
+        makeLoop(sr, bpm, 2, late, dl, dr);
+        auto da = analyse(dl, dr, sr, {});
+        const double msStep = 60000.0 / bpm / 4.0;
+        check(std::abs(da->alignSteps * msStep - 25.0) < 1.5, tag + "auto-align: finds the 25 ms offset", da->alignSteps * msStep);
+        double off = 0.0; for (size_t k = 1; k < da->slices.size(); ++k) off = std::max(off, std::abs(da->slices[k].gridStep - std::round(da->slices[k].gridStep)));
+        check(off < 0.02, tag + "auto-align: every hit back on its 16th (worst, 16ths)", off);
+        AnalysisSettings noAlign; noAlign.autoAlign = false;
+        check(std::abs(analyse(dl, dr, sr, noAlign)->alignSteps) < 1e-9, tag + "auto-align off leaves the loop alone");
+
+        // shift: whole 16ths
+        {
+            GrooveSettings sh; sh.groove = Groove::straight; sh.tighten = 1.0f; sh.accent = 0.0f; sh.shiftSteps = 2;
+            Slice sl; sl.gridStep = 4.0;
+            check(std::abs(place(sl, 3, sh, grooveTemplate(Groove::straight), 150.0).step - 6.0) < 1e-9, tag + "shift +2 moves a hit two 16ths later");
+        }
+
+        // hold: a sustained melody, note 2 moved late - with Hold the gap is filled, without it it is silent
+        std::vector<float> mel2((size_t) len, 0.0f);
+        const std::vector<int> noteSteps { 0, 8, 16, 24 };
+        const std::vector<int> notes { 57, 60, 64, 62 };
+        double phase = 0.0;      // continuous phase: the source itself has no clicks
+        for (size_t k = 0; k < noteSteps.size(); ++k)
+        {
+            const int a = (int) std::lround(noteSteps[k] * sps), b = k + 1 < noteSteps.size() ? (int) std::lround(noteSteps[k + 1] * sps) : len;
+            for (int i = a; i < b; ++i) { phase += 2.0 * pi * midiHz(notes[k]) / sr; mel2[(size_t) i] = 0.5f * (float) std::sin(phase); }
+        }
+        auto dh = analyse(mel2, mel2, sr, mel);
+        check(dh->slices.size() == 4, tag + "melodic: 4 notes, 4 slices", (double) dh->slices.size());
+        GrooveTemplate lateT; lateT.offset[8] = 0.45f;       // note 2 (16th 8) lands almost half a 16th late
+        for (bool holdOn : { false, true })
+        {
+            GrooveSettings gs; gs.groove = Groove::learned; gs.learned = lateT; gs.tighten = 1.0f; gs.accent = 0.0f; gs.hold = holdOn; gs.softCuts = true;
+            Player pl; pl.prepare(sr, 256); pl.update(*dh, gs, bpm);
+            const double spsHost = bpm / 60.0 * 4.0 / sr;
+            const int total = (int) std::floor(32 / spsHost) - 1;
+            std::vector<float> L((size_t) total, 0.0f), R((size_t) total, 0.0f);
+            for (int pos = 0; pos < total; pos += 256) pl.render(*dh, L.data() + pos, R.data() + pos, std::min(256, total - pos), pos * spsHost, spsHost, 1.0f);
+            // the gap: from the end of note 1's audio to the late note 2
+            const int g0 = (int) (8.0 / spsHost) + (int) (0.012 * sr), g1 = (int) (8.40 / spsHost);
+            double e = 0.0; for (int i = g0; i < g1; ++i) e += (double) L[(size_t) i] * L[(size_t) i];
+            const double rms = std::sqrt(e / std::max(1, g1 - g0));
+            float jump = 0.0f; for (int i = 1; i < total; ++i) jump = std::max(jump, std::abs(L[(size_t) i] - L[(size_t) i - 1]));
+            const float sineSlope = (float) (2.0 * pi * midiHz(64) / sr * 0.5);
+            if (holdOn)
+            {
+                check(rms > 0.25, tag + "hold: the note sustains through the gap (RMS)", rms);
+                check(jump < 2.5f * sineSlope, tag + "hold: no clicks anywhere (largest sample jump vs a clean sine)", jump / sineSlope);
+            }
+            else
+                check(rms < 0.02, tag + "hold off: the gap is clean silence (RMS)", rms);
+        }
+    }
+
     // Bar guessing
     check(chooseBars((int) (44100 * 4 * 60.0 / 140.0), 44100.0, 0) == 1, "1 bar at 140 BPM guessed as 1 bar");
     check(chooseBars((int) (44100 * 16 * 60.0 / 70.0), 44100.0, 0) == 8, "4 bars at 70 BPM read as 8 bars at 140", chooseBars((int) (44100 * 16 * 60.0 / 70.0), 44100.0, 0));

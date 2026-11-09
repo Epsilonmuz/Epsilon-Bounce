@@ -43,25 +43,32 @@ private:
     epsilon_ui::LookAndFeel look { epsilon_ui::Tier::Epsilon };
     epsilon_ui::HeaderBar header { epsilon_ui::Tier::Epsilon, "Bounce", juce::String (juce::CharPointer_UTF8 ("Loop re-groover")) };
     epsilon_ui::FooterBar footer { epsilon_ui::Tier::Epsilon, JucePlugin_VersionString };
+    juce::TooltipWindow tooltips { this, 700 };
 
-    juce::TextButton loadButton { "Load loop" }, previewButton { "Preview" }, learnButton { "Learn groove" };
+    juce::TextButton loadButton { "Load loop" }, previewButton { "Preview" }, learnButton { "Match drums" };
+    juce::TextButton holdButton { "Hold: auto" }, alignButton { "Auto-align" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAttachment;
     juce::TextButton prevPreset { "<" }, nextPreset { ">" };
     juce::ComboBox presetBox;
     std::unique_ptr<juce::TextButton> dragOwned;   // drag-to-DAW source
     GrooveGrid grid { proc };
     epsilon_ui::ModeSwitch grooveSwitch { proc.state, "groove" };
     epsilon_ui::ModeSwitch timeSwitch { proc.state, "time" };
+    epsilon_ui::ModeSwitch materialSwitch { proc.state, "material" };
+    epsilon_ui::ModeSwitch chopSwitch { proc.state, "chop" };
     epsilon_ui::Knob amount { proc.state, "amount", "Amount", true };
     epsilon_ui::Knob swing { proc.state, "swing", "Swing" }, tighten { proc.state, "tighten", "Tighten" },
                      humanize { proc.state, "humanize", "Humanize" }, accent { proc.state, "accent", "Accent" },
                      feel { proc.state, "feel", "Feel" }, output { proc.state, "output", "Output" },
-                     sensitivity { proc.state, "sensitivity", "Sensitivity" }, tempo { proc.state, "tempo", "Tempo" };
+                     sensitivity { proc.state, "sensitivity", "Sensitivity" }, tempo { proc.state, "tempo", "Tempo" },
+                     shift { proc.state, "shift", "Shift" };
     juce::ComboBox barsBox;
     juce::TextButton syncButton { "Host sync" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> barsAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> syncAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> heroPanel, feelPanel, slicePanel, learnInfoArea;
+    juce::Rectangle<int> barsLabel, chopLabel, cutLabel;
     juce::String message, loopTitle;
     int shownLearnSerial = -1;
 

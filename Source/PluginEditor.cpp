@@ -133,6 +133,33 @@ void GrooveGrid::paint(juce::Graphics& g)
         g.setColour(hot ? pal.focus : pal.live.withAlpha(0.35f + 0.65f * juce::jlimit(0.0f, 1.0f, places[i].gain * h)));
         g.fillRoundedRectangle(juce::Rectangle<float>(x1 - (hot ? 2.0f : 1.5f), top, hot ? 4.0f : 3.0f, r.getBottom() - 16.0f - top), 1.5f);
     }
+    // Match Drums: where your drums hit (learned), as markers along the top - the melody locks under them
+    const auto info = proc.getLearnInfo();
+    const auto gs = proc.currentGroove();
+    if (info.valid && gs.groove == bounce::Groove::learned)
+    {
+        g.setColour(pal.trim);
+        for (int b = 0; b < loop->bars; ++b)
+            for (int st = 0; st < bounce::stepsPerBar; ++st)
+                if (info.heard[(size_t) st])
+                {
+                    const float xs = xOf(b * bounce::stepsPerBar + st + gs.learned.offset[(size_t) st]);
+                    juce::Path tri;
+                    tri.addTriangle(xs - 4.0f, r.getY() + 3.0f, xs + 4.0f, r.getY() + 3.0f, xs, r.getY() + 10.0f);
+                    g.fillPath(tri);
+                }
+        g.setFont(caption());
+        g.drawText("LOCKED TO DRUMS: " + info.name + juce::String(juce::CharPointer_UTF8("  \xc2\xb7  ")) + juce::String(juce::roundToInt(info.swingPercent)) + " % swing",
+                   r.reduced(8.0f, 0.0f).withY(r.getY() + 12.0f).withHeight(16.0f).withTrimmedLeft(r.getWidth() * 0.3f), juce::Justification::centredRight, true);
+    }
+    if (std::abs(loop->alignSteps) > 1e-6)
+    {
+        const double ms = loop->alignSteps * 60000.0 / loop->bpm / 4.0;
+        g.setFont(caption());
+        g.setColour(pal.inkMuted);
+        g.drawText(juce::String::fromUTF8("ALIGNED ") + (ms > 0 ? "+" : "") + juce::String(ms, 1) + " ms",
+                   r.reduced(8.0f, 2.0f).withHeight(16.0f).withY(r.getBottom() - 18.0f), juce::Justification::centredRight, false);
+    }
     if (dragOver)
     {
         g.setColour(pal.live);
@@ -182,7 +209,24 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
     previewButton.onClick = [this] { proc.setPreview(previewButton.getToggleState()); };
     loadButton.onClick = [this] { chooseFile(false); };
     learnButton.onClick = [this] { chooseFile(true); };
-    learnButton.setTooltip("Copy the timing feel of any reference loop (a drummer, a break, a beat you love) onto your loop. Tip: Alt-drop a file on the grid.");
+    learnButton.setTooltip("Drop in your drum loop: Bounce learns its exact pocket and lines your melody or sample up with it. Tip: Alt-drop a file on the grid.");
+    for (auto* b : { &holdButton, &alignButton }) { b->getProperties().set("pill", true); addAndMakeVisible(b); }
+    holdButton.setTooltip("Hold keeps a note sounding until the next one starts, so moved notes leave no gaps. AUTO: on for Melodic and Grid, off for Drums.");
+    holdButton.onClick = [this]
+    {
+        if (auto* p = proc.state.getParameter("hold"))
+        {
+            const int next = (juce::roundToInt(p->convertFrom0to1(p->getValue())) + 1) % 3;
+            p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1((float) next)); p->endChangeGesture();
+        }
+    };
+    alignButton.setClickingTogglesState(true);
+    alignButton.setTooltip("Finds where the loop's beat really sits and fixes samples that start a few ms early or late.");
+    alignAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.state, "align", alignButton);
+    materialSwitch.setTooltip("What to cut on: DRUMS = hits, MELODIC = note and chord changes, GRID = even chops on the beat (dense samples).");
+    addAndMakeVisible(materialSwitch);
+    addAndMakeVisible(chopSwitch);
+    addAndMakeVisible(shift);
 
     buildPresetMenu();
     presetBox.setTextWhenNothingSelected("Presets");
@@ -216,6 +260,7 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
     addAndMakeVisible(grooveSwitch);
     addAndMakeVisible(timeSwitch);
     for (auto* k : { &amount, &swing, &tighten, &humanize, &accent, &feel, &output, &sensitivity, &tempo }) addAndMakeVisible(k);
+    shift.setTooltip("Slide where bar 1 starts, in 16ths - for samples that begin on a pickup.");
 
     barsBox.addItemList({ "Auto", "1 bar", "2 bars", "4 bars", "8 bars" }, 1);
     addAndMakeVisible(barsBox);
@@ -224,9 +269,9 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
     syncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.state, "sync", syncButton);
 
     setResizable(true, true);
-    setResizeLimits(960 * 3 / 4, 600 * 3 / 4, 960 * 2, 600 * 2);
-    getConstrainer()->setFixedAspectRatio(960.0 / 600.0);
-    setSize(960, 600);
+    setResizeLimits(1080 * 3 / 4, 680 * 3 / 4, 1080 * 2, 680 * 2);
+    getConstrainer()->setFixedAspectRatio(1080.0 / 680.0);
+    setSize(1080, 680);
     startTimerHz(30);
 }
 
@@ -271,7 +316,15 @@ void EpsilonBounceEditor::timerCallback()
     tempo.setEnabled(! syncButton.getToggleState() || ! proc.hostIsPlaying());
     const int cur = proc.getCurrentPreset();
     if (presetBox.getSelectedId() != cur + 1) presetBox.setSelectedId(cur + 1, juce::dontSendNotification);
-    learnButton.setButtonText(proc.isLearning() ? "Learning..." : "Learn groove");
+    learnButton.setButtonText(proc.isLearning() ? "Listening..." : "Match drums");
+    {
+        const int h = juce::roundToInt(proc.state.getParameter("hold")->convertFrom0to1(proc.state.getParameter("hold")->getValue()));
+        const juce::String txt = h == 1 ? "Hold: on" : h == 2 ? "Hold: off" : (proc.holdActive() ? "Hold: auto (on)" : "Hold: auto (off)");
+        if (holdButton.getButtonText() != txt) holdButton.setButtonText(txt);
+        holdButton.setToggleState(proc.holdActive(), juce::dontSendNotification);
+        const bool isGrid = proc.material() == bounce::Material::grid;
+        if (chopSwitch.isEnabled() != isGrid) { chopSwitch.setEnabled(isGrid); chopSwitch.setAlpha(isGrid ? 1.0f : 0.4f); }
+    }
     if (proc.getLearnSerial() != shownLearnSerial)
     {
         shownLearnSerial = proc.getLearnSerial();
@@ -288,23 +341,27 @@ void EpsilonBounceEditor::paint(juce::Graphics& g)
     const auto& pal = look.colours();
     g.fillAll(pal.bg);
     drawPanel(g, heroPanel.toFloat(), pal, "Groove");
+    if (message.isNotEmpty()) { g.setColour(pal.surface); g.fillRect(grid.getBounds().withHeight(20).translated(0, -22)); }
     drawPanel(g, feelPanel.toFloat(), pal, "Feel");
     if (loopTitle.isNotEmpty())
     {
         g.setFont(body());
         g.setColour(pal.ink);
-        g.drawText(loopTitle, heroPanel.withHeight(34).withTrimmedLeft(96).withTrimmedRight(size::space4), juce::Justification::centredLeft, true);
+        g.drawText(loopTitle, heroPanel.withHeight(42).withTrimmedLeft(96).withTrimmedRight(400), juce::Justification::centredLeft, true);
     }
     g.setFont(sectionLabel());
     g.setColour(pal.inkMuted);
     g.drawText("SLICING", slicePanel.withHeight(14), juce::Justification::centredLeft, false);
-    g.drawText("BARS", barsBox.getBounds().translated(0, -18).withHeight(14), juce::Justification::centredLeft, false);
+    g.drawText("BARS", barsLabel, juce::Justification::centredLeft, false);
+    g.drawText("GRID CHOP", chopLabel, juce::Justification::centredLeft, false);
+    g.drawText("CUT ON", cutLabel, juce::Justification::centredRight, false);
     g.drawText("TIME", timeSwitch.getBounds().translated(0, -18).withHeight(14), juce::Justification::centredLeft, false);
 
     // what the learned groove is, under the Learn button
     const auto info = proc.getLearnInfo();
     g.setFont(caption());
-    if (info.valid)
+    if (learnInfoArea.isEmpty()) {}
+    else if (info.valid)
     {
         g.setColour(pal.ink);
         g.drawText(info.name, learnInfoArea.withHeight(16), juce::Justification::centredLeft, true);
@@ -315,12 +372,12 @@ void EpsilonBounceEditor::paint(juce::Graphics& g)
     else
     {
         g.setColour(pal.inkMuted);
-        g.drawFittedText("Copy any loop's feel:\nAlt-drop it on the grid", learnInfoArea, juce::Justification::topLeft, 2);
+        g.drawFittedText("Drop your drum loop here\nto lock this loop to it", learnInfoArea, juce::Justification::topLeft, 2);
     }
     if (message.isNotEmpty())
     {
         g.setColour(pal.meterHot);
-        g.drawText(message, heroPanel.withHeight(34).withTrimmedLeft(96).reduced(size::space4, 0), juce::Justification::centredRight, true);
+        g.drawText(message, grid.getBounds().withHeight(20).reduced(8, 0).translated(0, -22), juce::Justification::centredRight, true);
     }
 }
 
@@ -344,29 +401,37 @@ void EpsilonBounceEditor::resized()
     presetBox.setBounds(hc);
 
     r.reduce(size::space6, size::space4);
-    feelPanel = r.removeFromRight(juce::roundToInt(r.getWidth() * 0.32f));
+    feelPanel = r.removeFromRight(juce::roundToInt(r.getWidth() * 0.30f));
     r.removeFromRight(size::space4);
     heroPanel = r;
 
     auto h = heroPanel.reduced(size::space4);
-    h.removeFromTop(24);
-    auto sliceRow = h.removeFromBottom(100);
+    auto titleRow = h.removeFromTop(30);
+    materialSwitch.setBounds(titleRow.removeFromRight(300).withTrimmedTop(2));
+    cutLabel = titleRow.removeFromRight(70).withTrimmedRight(size::space2);
+    h.removeFromTop(4);
+    auto sliceRow = h.removeFromBottom(112);
     grooveSwitch.setBounds(h.removeFromBottom(84));
     h.removeFromBottom(size::space3);
     grid.setBounds(h);
 
     slicePanel = sliceRow;
     auto sr = sliceRow.withTrimmedTop(16);
-    sensitivity.setBounds(sr.removeFromLeft(84));
+    for (auto* k : { &sensitivity, &shift, &tempo }) { k->setBounds(sr.removeFromLeft(66)); sr.removeFromLeft(2); }
     sr.removeFromLeft(size::space2);
-    tempo.setBounds(sr.removeFromLeft(84));
-    sr.removeFromLeft(size::space4);
-    auto col = sr.removeFromLeft(120);
+    auto col = sr.removeFromLeft(104);
+    barsLabel = col.withTrimmedTop(4).withHeight(14);
     barsBox.setBounds(col.withTrimmedTop(22).withHeight(28));
     syncButton.setBounds(col.withTrimmedTop(22 + 28 + size::space2).withHeight(26));
-    sr.removeFromLeft(size::space4);
-    learnButton.setBounds(sr.withTrimmedTop(22).withHeight(28).withWidth(juce::jmin(150, sr.getWidth())));
-    learnInfoArea = sr.withTrimmedTop(22 + 28 + 6).withWidth(juce::jmin(200, sr.getWidth()));
+    sr.removeFromLeft(size::space2);
+    auto col2 = sr.removeFromLeft(138);
+    chopLabel = col2.withTrimmedTop(4).withHeight(14);
+    chopSwitch.setBounds(col2.withTrimmedTop(22).withHeight(28));
+    holdButton.setBounds(col2.withTrimmedTop(22 + 28 + size::space2).withHeight(26));
+    sr.removeFromLeft(size::space2);
+    learnButton.setBounds(sr.withTrimmedTop(22).withHeight(28));
+    alignButton.setBounds(sr.withTrimmedTop(22 + 28 + size::space2).withHeight(26));
+    learnInfoArea = {};   // what was learned is shown on the grid itself
 
     auto f = feelPanel.reduced(size::space4);
     f.removeFromTop(22);

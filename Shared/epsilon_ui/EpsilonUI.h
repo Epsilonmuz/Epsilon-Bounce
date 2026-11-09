@@ -285,7 +285,7 @@ private:
 
 //==============================================================================
 // Knob with label and value underneath, attached to a parameter.
-class Knob : public juce::Component
+class Knob : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     Knob(juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& name, bool hero = false)
@@ -339,7 +339,7 @@ private:
 
 //==============================================================================
 // Segmented switch bound to a choice parameter.
-class ModeSwitch : public juce::Component, private juce::AudioProcessorValueTreeState::Listener, private juce::AsyncUpdater
+class ModeSwitch : public juce::Component, public juce::SettableTooltipClient, private juce::AudioProcessorValueTreeState::Listener, private juce::AsyncUpdater
 {
 public:
     ModeSwitch(juce::AudioProcessorValueTreeState& s, const juce::String& id) : state(s), paramID(id)
