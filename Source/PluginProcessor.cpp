@@ -309,20 +309,29 @@ juce::File EpsilonBounceProcessor::renderToFile(int loops)
         p.render(*loop, out.getWritePointer(0) + pos, out.getWritePointer(1) + pos, juce::jmin(512, total - pos), pos * sps, sps, gain);
 
     const auto grooveName = juce::String(bounce::grooveName(readGroove().groove)).toLowerCase();
-    auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Epsilon Bounce");
-    dir.createDirectory();
-    auto file = dir.getChildFile(juce::File::createLegalFileName(loopName + " - " + grooveName + " " + juce::String(juce::roundToInt(hostTempo)) + " BPM"
-                                                                   + (timeFactor() < 1.0 ? " half-time" : timeFactor() > 1.0 ? " double-time" : "") + ".wav"));
-    file.deleteFile();
-    juce::WavAudioFormat wav;
-    if (auto stream = std::unique_ptr<juce::OutputStream>(file.createOutputStream()))
-        if (auto writer = std::unique_ptr<juce::AudioFormatWriter>(wav.createWriterFor(stream.get(), outRate, 2, 24, {}, 0)))
-        {
-            stream.release();
-            writer->writeFromAudioSampleBuffer(out, 0, total);
-            return file;
-        }
-    return {};
+    // Kept in Music/Epsilon Sounds/Epsilon Bounce/, not temp: FL Studio links dragged-in audio by its
+    // path, so a temp file would later go missing from the project. Same audio reuses its file;
+    // different audio gets a new name, so a file a project already uses is never overwritten.
+    juce::MemoryBlock bytes;
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::MemoryOutputStream>(bytes, false);
+        auto writer = wav.createWriterFor(stream, juce::AudioFormatWriterOptions{}.withSampleRate(outRate)
+                                                      .withNumChannels(2).withBitsPerSample(24));
+        if (writer == nullptr || ! writer->writeFromAudioSampleBuffer(out, 0, total)) return {};
+    }
+    auto dir = juce::File::getSpecialLocation(juce::File::userMusicDirectory).getChildFile("Epsilon Sounds").getChildFile("Epsilon Bounce");
+    if (! dir.createDirectory()) return {};
+    const auto base = juce::File::createLegalFileName(loopName + " - " + grooveName + " " + juce::String(juce::roundToInt(hostTempo)) + " BPM"
+                                                      + (timeFactor() < 1.0 ? " half-time" : timeFactor() > 1.0 ? " double-time" : ""));
+    auto file = dir.getChildFile(base + ".wav");
+    for (int n = 2; file.existsAsFile(); ++n)
+    {
+        juce::MemoryBlock existing;
+        if (file.getSize() == (juce::int64) bytes.getSize() && file.loadFileAsData(existing) && existing == bytes) return file;
+        file = dir.getChildFile(base + " (" + juce::String(n) + ").wav");
+    }
+    return file.replaceWithData(bytes.getData(), bytes.getSize()) ? file : juce::File();
 }
 
 //==============================================================================

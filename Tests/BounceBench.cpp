@@ -163,6 +163,18 @@ int main(int argc, char** argv)
         // drag-out render
         const auto f = p.renderToFile(2);
         check(f.existsAsFile() && f.getSize() > 100000, tag + "drag-out renders " + f.getFileName());
+        check(! f.isAChildOf(juce::File::getSpecialLocation(juce::File::tempDirectory)), tag + "drag-out file is kept out of temp (FL links by path)");
+        check(p.renderToFile(2) == f, tag + "the same drag-out reuses its file");
+        {
+            auto* amt = p.state.getParameter("amount");
+            const auto before = amt->getValue();
+            amt->setValueNotifyingHost(before > 0.5f ? 0.2f : 0.9f);
+            const auto g = p.renderToFile(2);
+            check(g.existsAsFile() && g != f && f.existsAsFile(), tag + "a changed drag-out gets a new file; the old one stays");
+            g.deleteFile();
+            amt->setValueNotifyingHost(before);
+        }
+        f.deleteFile();
 
 
         // ---- v1.1: presets, time modality, Groove Learn

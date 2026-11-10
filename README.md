@@ -25,7 +25,7 @@ A sample that doesn't sit with your beat is one of four problems; Bounce fixes e
 2. **Slice** — spectral-flux onset detection finds each hit, then walks back to where the attack really starts and keeps 3 ms of pre-roll so transients stay intact. The bar count is guessed from the length (tempo between 85 and 170 BPM), or set it with *Bars*.
 3. **Re-groove** — every slice is placed on the 16th grid, pulled toward it by *Tighten*, then moved by the pocket. 13 pockets: STRAIGHT, DEMBOW, DRILL, TRAP, REGGAETON, AFROBEATS, AMAPIANO, JERSEY, BOOM BAP, UK GARAGE, LO-FI, BAILE FUNK, PHONK, plus **LEARNED** — the feel copied from any reference loop with *Learn groove* (or Alt-drop on the grid). 42 presets give each genre 3–4 takes (more swing, tighter, pushed or laid back), and *Time* plays the loop at half or double time.
 4. **Play** — slices trigger from the host playhead (sample-accurate, follows tempo changes and loop jumps). Each new hit chokes the last with a 4 ms fade, so moved hits leave clean gaps, not clicks. With the host stopped, *Preview* plays at the *Tempo* knob.
-5. **Drag out** — hold *Drag out* and drop into a track: a 24-bit WAV of two loops, re-grooved at your project tempo.
+5. **Drag out** — hold *Drag out* and drop into a track: a 24-bit WAV of two loops, re-grooved at your project tempo. Files are kept in *Music/Epsilon Sounds/Epsilon Bounce/* (FL links dragged audio by its location, so not a temp folder), and a new take never overwrites one a project already uses.
 
 The champagne bars on the grid show where each hit lands; the small hollow ticks at the bottom show where it was, joined by a line — you see the bounce.
 
