@@ -44,6 +44,7 @@ public:
     bool hostIsPlaying() const { return hostPlaying.load(); }
     juce::File renderToFile(int loops);                     // offline bounce for drag-out
     void prepareDragOut(int loops);                         // render it ahead, in the background (mouse over Drag out)
+    bool isDragOutReady(int loops) const { const auto k = dragKey(loops); const juce::ScopedLock sl(loopLock); return dragCacheKey == k; }
     int getLoopSerial() const { return loopSerial.load(); }
     float getCpuPercent() const { return cpu.load(); }
     double timeFactor() const;                              // 0.5 half-time, 1, 2 double-time

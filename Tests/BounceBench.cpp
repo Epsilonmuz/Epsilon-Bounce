@@ -192,7 +192,8 @@ void lagProfile()
         f.deleteFile();
         p.state.getParameter("swing")->setValueNotifyingHost(0.3f);   // new settings, then the mouse reaches the button
         p.prepareDragOut(2);
-        juce::Thread::sleep(1500);
+        for (int i = 0; i < 1000 && ! p.isDragOutReady(2); ++i) juce::Thread::sleep(10);   // the mouse rests on the button
+        check(p.isDragOutReady(2), "lag: the drag-out is ready in the background");
         t0 = juce::Time::getMillisecondCounterHiRes();
         f = p.renderToFile(2);
         const double warm = msSince(t0);
