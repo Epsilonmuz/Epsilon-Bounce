@@ -4,6 +4,7 @@
 #include <random>
 #include <string>
 #include <chrono>
+#include <atomic>
 
 using namespace bounce;
 static int failures = 0, checks = 0;
@@ -425,6 +426,142 @@ int main()
         float L[64] {}, R[64] {};
         p.render(*d2, L, R, 64, 0.0, 0.001, 1.0f);
         check(true, "tiny loop renders nothing, safely");
+    }
+
+    // ---- v1.4: any melody, any drums, their pockets
+    {
+        const double sr = 48000.0;
+        auto chord = [sr](double bpm, int bars, double decayPerSec, std::vector<float>& l, std::vector<float>& r, double tailSec = 0.0)
+        {
+            // chords changing every 2 beats; decayPerSec 0 = sustained pad, 6 = plucked keys
+            const int len = (int) std::lround(bars * 4 * 60.0 / bpm * sr + tailSec * sr);
+            l.assign((size_t) len, 0.0f);
+            const double half = 2 * 60.0 / bpm * sr;
+            const int roots[] { 57, 53, 48, 55 };
+            for (int i = 0; i < len; ++i)
+            {
+                const int k = std::min((int) (i / half), bars * 2 - 1);
+                const double t = (i - k * half) / sr;
+                float v = 0.0f;
+                for (int m : { roots[k % 4], roots[k % 4] + 4, roots[k % 4] + 7 }) v += (float) std::sin(2.0 * pi * 440.0 * std::pow(2.0, (m - 69) / 12.0) * (i / sr));
+                l[(size_t) i] = 0.2f * v * (float) std::exp(-decayPerSec * t) * (i > bars * 4 * 60.0 / bpm * sr ? (float) std::exp(-(i - bars * 4 * 60.0 / bpm * sr) / sr * 8.0) : 1.0f);
+            }
+            r = l;
+        };
+        std::vector<float> l, r;
+        const std::vector<int> beat { 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30 };
+        makeLoop(sr, 140.0, 2, beat, l, r);
+        auto g1 = detectMaterial(l, r, sr);
+        check(g1.material == Material::drums, "auto: a drum loop is read as DRUMS (flatness)", g1.flatness);
+        chord(140.0, 4, 6.0, l, r);
+        auto g2 = detectMaterial(l, r, sr);
+        check(g2.material == Material::melodic, "auto: plucked keys are read as MELODIC (flatness)", g2.flatness);
+        chord(140.0, 4, 0.0, l, r);
+        auto g3 = detectMaterial(l, r, sr);
+        check(g3.material == Material::melodic, "auto: a sustained pad is read as MELODIC (flatness)", g3.flatness);
+        {
+            // kick (pitched sweep) + hats: tonal low end, noisy top - still drums
+            const int len = (int) (8 * 60.0 / 140.0 * sr);
+            l.assign((size_t) len, 0.0f);
+            std::mt19937 rng(3); std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+            const double sps = len / 32.0;
+            for (int st = 0; st < 32; ++st)
+            {
+                const int at = (int) (st * sps);
+                if (st % 4 == 0)
+                    for (int i = 0; i < (int) (0.25 * sr) && at + i < len; ++i)
+                    { const double t = i / sr; l[(size_t) (at + i)] += 0.8f * (float) (std::exp(-t * 12.0) * std::sin(2.0 * pi * (50.0 * t + 60.0 * (1.0 - std::exp(-t * 30.0)) / 30.0))); }
+                for (int i = 0; i < (int) (0.03 * sr) && at + i < len; ++i) l[(size_t) (at + i)] += 0.3f * (float) std::exp(-i / (0.006 * sr)) * u(rng);
+            }
+            r = l;
+            auto g4 = detectMaterial(l, r, sr);
+            check(g4.material == Material::drums, "auto: kick + hats are read as DRUMS (flatness)", g4.flatness);
+        }
+
+        // a 16-bar melody at 140 BPM is 16 bars, not 8 bars at 70
+        check(chooseBars((int) (sr * 16 * 4 * 60.0 / 140.0), sr, 0) == 16, "a 16-bar loop at 140 BPM is read as 16 bars", chooseBars((int) (sr * 16 * 4 * 60.0 / 140.0), sr, 0));
+
+        // a drum loop bounced with a 400 ms reverb tail: with the project tempo every hit is exactly on its 16th
+        {
+            makeLoop(sr, 140.0, 4, std::vector<int> { 0, 3, 6, 8, 11, 14, 16, 19, 22, 24, 27, 30, 32, 35, 38, 40, 43, 46, 48, 51, 54, 56, 59, 62 }, l, r);
+            l.resize(l.size() + (size_t) (0.4 * sr), 0.0f); r = l;
+            AnalysisSettings a; a.autoAlign = false;
+            auto blind = analyse(l, r, sr, a);
+            a.tempoHint = 140.0;
+            auto told = analyse(l, r, sr, a);
+            double wb = 0, wt = 0;
+            for (auto& sl : blind->slices) wb = std::max(wb, std::abs(sl.gridStep - std::round(sl.gridStep)));
+            for (auto& sl : told->slices) wt = std::max(wt, std::abs(sl.gridStep - std::round(sl.gridStep)));
+            check(told->bars == 4 && wt < 0.03, "tail: with the project tempo, every hit sits on its 16th (worst, 16ths)", wt);
+            check(wb > wt, "tail: without it the grid drifts by (worst, 16ths)", wb);
+            check(told->slices.size() == 24, "tail: the reverb tail is not cut as a hit (slices)", (double) told->slices.size());
+        }
+
+        // tempo hint ignored when the loop clearly isn't at the project tempo
+        {
+            makeLoop(sr, 92.0, 2, beat, l, r);
+            AnalysisSettings a; a.tempoHint = 140.0;
+            auto d = analyse(l, r, sr, a);
+            check(std::abs(d->bpm - 92.0) < 0.5 && d->bars == 2, "a 92 BPM sample in a 140 project keeps its own grid (bpm)", d->bpm);
+        }
+
+        // a run that is out of date is abandoned
+        {
+            chord(140.0, 8, 6.0, l, r);
+            std::atomic<bool> cancel { true };
+            AnalysisSettings a; a.material = Material::melodic; a.cancel = &cancel;
+            check(analyse(l, r, sr, a) == nullptr, "cancel: an out-of-date analysis stops early");
+        }
+
+        // speed: 60 s of melody
+        {
+            chord(120.0, 30, 6.0, l, r);
+            AnalysisSettings a; a.material = Material::melodic;
+            const auto t0 = std::chrono::steady_clock::now();
+            auto d = analyse(l, r, sr, a);
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            check(d != nullptr && ms < 4000.0, "speed: 60 s melodic analysis (ms)", ms);
+            const auto t1 = std::chrono::steady_clock::now();
+            auto gm = detectMaterial(l, r, sr);
+            const double dm = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
+            check(gm.material == Material::melodic && dm < 300.0, "speed: drums-or-melody detection (ms)", dm);
+        }
+
+        // Lock a melody to drums: learn a swung drum loop, then the chord changes land in its pocket
+        {
+            std::vector<double> swung;
+            for (int st = 0; st < 32; ++st) swung.push_back(st + ((st & 1) ? 0.3 : 0.0) + (st % 8 == 4 ? 0.08 : 0.0));
+            makeLoop(sr, 140.0, 2, swung, l, r);
+            AnalysisSettings ra; ra.sensitivity = 0.6f; ra.tempoHint = 140.0;
+            auto ref = analyse(l, r, sr, ra);
+            auto learned = learnGroove(*ref);
+            // a melody whose notes change on 16ths 0, 3, 4, 6, 8, 11, 12, 14 ... dead straight
+            const int len = (int) (8 * 60.0 / 140.0 * sr);
+            l.assign((size_t) len, 0.0f);
+            const double sps = len / 32.0;
+            const std::vector<int> notes { 0, 3, 4, 6, 8, 11, 12, 14, 16, 19, 20, 22, 24, 27, 28, 30 };
+            for (size_t k = 0; k < notes.size(); ++k)
+            {
+                const int a0 = (int) (notes[k] * sps), a1 = k + 1 < notes.size() ? (int) (notes[k + 1] * sps) : len;
+                const double hz = 220.0 * std::pow(2.0, (double) ((k * 5) % 12) / 12.0);
+                for (int i = a0; i < a1; ++i) l[(size_t) i] = 0.4f * (float) (std::exp(-(i - a0) / sr * 10.0) * std::sin(2.0 * pi * hz * (i - a0) / sr));
+            }
+            r = l;
+            AnalysisSettings ma; ma.material = Material::melodic; ma.tempoHint = 140.0;
+            auto mel = analyse(l, r, sr, ma);
+            GrooveSettings g; g.groove = Groove::learned; g.learned = learned.groove; g.amount = 1.0f; g.tighten = 1.0f; g.accent = 0.0f;
+            const auto t = templateFor(g);
+            double worst = 0.0; int n = 0;
+            for (size_t i = 0; i < mel->slices.size(); ++i)
+            {
+                const auto pl = place(mel->slices[i], (int) i, g, t, 60000.0 / 140.0 / 4.0);
+                const int st = (int) std::lround(mel->slices[i].gridStep);
+                const double want = st + ((st & 1) ? 0.3 : 0.0) + (st % 8 == 4 ? 0.08 : 0.0);
+                worst = std::max(worst, std::abs(pl.step - want)); ++n;
+                if (std::abs(pl.step - want) > 0.05) std::printf("   note %d: gridStep %.3f -> %.3f, want %.3f\n", (int) i, mel->slices[i].gridStep, pl.step, want);
+            }
+            check(n == 16 && worst < 0.05, "lock: every melody note lands in the drums' pocket (worst, 16ths)", worst);
+        }
     }
 
     std::printf("\n%d checks, %d failed\n", checks, failures);

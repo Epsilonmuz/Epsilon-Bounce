@@ -30,6 +30,21 @@ private:
     void renderCache();
 };
 
+// "Match drums": click to choose your drum loop, or drop it straight onto the button.
+struct DropButton : juce::TextButton, juce::FileDragAndDropTarget
+{
+    using juce::TextButton::TextButton;
+    std::function<void(const juce::File&)> onFileDropped;
+    bool isInterestedInFileDrag(const juce::StringArray& f) override { return f.size() > 0 && juce::File(f[0]).hasFileExtension("wav;aif;aiff;flac;ogg;mp3"); }
+    void fileDragEnter(const juce::StringArray&, int, int) override { setToggleState(true, juce::dontSendNotification); }
+    void fileDragExit(const juce::StringArray&) override { setToggleState(false, juce::dontSendNotification); }
+    void filesDropped(const juce::StringArray& f, int, int) override
+    {
+        setToggleState(false, juce::dontSendNotification);
+        if (onFileDropped && f.size() > 0) onFileDropped(juce::File(f[0]));
+    }
+};
+
 class EpsilonBounceEditor : public juce::AudioProcessorEditor, private juce::Timer, public juce::DragAndDropContainer
 {
 public:
@@ -45,7 +60,8 @@ private:
     epsilon_ui::FooterBar footer { epsilon_ui::Tier::Epsilon, JucePlugin_VersionString };
     juce::TooltipWindow tooltips { this, 700 };
 
-    juce::TextButton loadButton { "Load loop" }, previewButton { "Preview" }, learnButton { "Match drums" };
+    juce::TextButton loadButton { "Load loop" }, previewButton { "Preview" };
+    DropButton learnButton { "Match drums" };
     juce::TextButton holdButton { "Hold: auto" }, alignButton { "Auto-align" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAttachment;
     juce::TextButton prevPreset { "<" }, nextPreset { ">" };
@@ -70,7 +86,8 @@ private:
     juce::Rectangle<int> heroPanel, feelPanel, slicePanel, learnInfoArea;
     juce::Rectangle<int> barsLabel, chopLabel, cutLabel;
     juce::String message, loopTitle;
-    int shownLearnSerial = -1;
+    bool messageIsNote = false;       // grey info line instead of a red problem
+    int shownLearnSerial = -1, shownNoteSerial = 0;
 
     void load(const juce::File& f, bool learn);
     void chooseFile(bool learn);

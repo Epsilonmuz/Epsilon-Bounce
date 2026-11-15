@@ -3,6 +3,7 @@
 
 namespace
 {
+constexpr char stateMagic[4] { 'E', 'B', 'v', '2' };
 juce::String pct(float v) { return juce::String(juce::roundToInt(v)) + " %"; }
 juce::String ms(float v) { return (v > 0.05f ? "+" : "") + juce::String(v, 1) + " ms"; }
 constexpr int barsChoices[] { 0, 1, 2, 4, 8 };
@@ -61,6 +62,7 @@ EpsilonBounceProcessor::~EpsilonBounceProcessor()
 {
     stopTimer();
     worker.removeAllJobs(true, 4000);
+    encoder.removeAllJobs(true, 4000);
 }
 
 bool EpsilonBounceProcessor::isBusesLayoutSupported(const BusesLayout& l) const
@@ -106,7 +108,15 @@ bool EpsilonBounceProcessor::holdActive() const
 juce::String EpsilonBounceProcessor::sliceKey() const
 {
     return juce::String(juce::roundToInt(pSensitivity->load())) + "|" + juce::String(juce::roundToInt(pBars->load())) + "|"
-         + juce::String((int) material()) + "|" + juce::String(juce::roundToInt(pChop->load())) + "|" + juce::String(pAlign->load() >= 0.5f ? 1 : 0);
+         + juce::String((int) material()) + "|" + juce::String(juce::roundToInt(pChop->load())) + "|" + juce::String(pAlign->load() >= 0.5f ? 1 : 0)
+         + "|" + juce::String(analysisTempoHint(), 1);
+}
+
+// The project tempo, when the host gives one: a loop bounced from the same project then gets an exact grid.
+double EpsilonBounceProcessor::analysisTempoHint() const
+{
+    const double h = hostBpm.load();
+    return pSync->load() >= 0.5f && h >= 40.0 && h <= 300.0 ? h : 0.0;
 }
 
 bounce::GrooveTemplate EpsilonBounceProcessor::readLearned() const
@@ -221,6 +231,11 @@ juce::String EpsilonBounceProcessor::loadFile(const juce::File& file)
     reader->read(&buf, 0, n, 0, true, buf.getNumChannels() > 1);
     std::vector<float> l(buf.getReadPointer(0), buf.getReadPointer(0) + n);
     std::vector<float> r(buf.getReadPointer(buf.getNumChannels() - 1), buf.getReadPointer(buf.getNumChannels() - 1) + n);
+
+    // Drums or a melody? The analysis job decides (off this thread) and picks the cut mode for it.
+    // GRID is a deliberate choice, so it is left alone.
+    loadNote.clear();
+    detectOnNextAnalysis = material() != bounce::Material::grid;
     setRawAudio(std::move(l), std::move(r), reader->sampleRate, file.getFileNameWithoutExtension());
     return {};
 }
@@ -230,8 +245,36 @@ void EpsilonBounceProcessor::setRawAudio(std::vector<float> l, std::vector<float
     {
         const juce::ScopedLock sl(loopLock);
         rawL = std::move(l); rawR = std::move(r); rawRate = sr; loopName = name;
+        ++rawSerial;
     }
     startAnalysis();
+    encoder.addJob([this] { encodeFlacCache(); });   // ready long before the host's next save
+}
+
+juce::MemoryBlock EpsilonBounceProcessor::encodeFlac(const std::vector<float>& l, const std::vector<float>& r, double sr)
+{
+    juce::MemoryBlock flacData;
+    auto* mos = new juce::MemoryOutputStream(flacData, false);
+    juce::FlacAudioFormat flac;
+    std::unique_ptr<juce::AudioFormatWriter> w(flac.createWriterFor(mos, sr, 2, 24, {}, 0));
+    if (w == nullptr) { delete mos; return {}; }
+    const float* chans[] { l.data(), r.data() };
+    w->writeFromFloatArrays(chans, 2, (int) l.size());
+    w.reset();
+    return flacData;
+}
+
+void EpsilonBounceProcessor::encodeFlacCache()
+{
+    std::vector<float> l, r; double sr; int serial;
+    {
+        const juce::ScopedLock sl(loopLock);
+        if (rawL.empty() || flacFor == rawSerial) return;
+        l = rawL; r = rawR; sr = rawRate; serial = rawSerial;
+    }
+    auto data = encodeFlac(l, r, sr);
+    const juce::ScopedLock sl(loopLock);
+    if (serial == rawSerial) { flacCache = std::move(data); flacFor = serial; }
 }
 
 void EpsilonBounceProcessor::startAnalysis()
@@ -248,12 +291,40 @@ void EpsilonBounceProcessor::startAnalysis()
     a.material = material();
     a.gridDiv = juce::roundToInt(pChop->load()) == 2 ? 4 : juce::roundToInt(pChop->load()) == 1 ? 2 : 1;
     a.autoAlign = pAlign->load() >= 0.5f;
+    a.tempoHint = analysisTempoHint();
+    a.cancel = &cancelAnalysis;
     lastSliceKey = sliceKey();
     analysing = true;
-    worker.addJob([this, l = std::move(l), r = std::move(r), sr, a]() mutable
+    cancelAnalysis = false;
+    const bool detect = std::exchange(detectOnNextAnalysis, false);
+    worker.addJob([this, l = std::move(l), r = std::move(r), sr, a, detect]() mutable
     {
+        bool switched = false;
+        if (detect)
+        {
+            const auto guess = bounce::detectMaterial(l, r, sr);
+            switched = guess.material != a.material;
+            a.material = guess.material;
+        }
         auto data = bounce::analyse(std::move(l), std::move(r), sr, a);
-        juce::MessageManager::callAsync([this, data] { publish(data); analysing = false; });
+        juce::MessageManager::callAsync([this, data, detect, switched, m = a.material]
+        {
+            if (detect)
+            {
+                if (switched)
+                    if (auto* p = state.getParameter("material"))
+                    {
+                        p->beginChangeGesture();
+                        p->setValueNotifyingHost(p->convertTo0to1((float) m));
+                        p->endChangeGesture();
+                    }
+                lastSliceKey = sliceKey();   // this result already uses the detected mode: no second run
+                loadNote = m == bounce::Material::melodic ? "Melody detected: cutting on note and chord changes" : "Drums detected: cutting on hits";
+                ++noteSerial;
+            }
+            if (data != nullptr) publish(data);   // nullptr: abandoned for newer settings; the timer starts the next run
+            analysing = false;
+        });
     });
 }
 
@@ -279,7 +350,9 @@ void EpsilonBounceProcessor::timerCallback()
         const auto* busy = inUse.load(std::memory_order_acquire);
         retired.erase(std::remove_if(retired.begin(), retired.end(), [busy](const auto& p) { return p.get() != busy; }), retired.end());
     }
-    // Slicing controls changed: re-analyse (debounced by the 10 Hz timer)
+    // Slicing controls changed: re-analyse (debounced by the 10 Hz timer). A run that is already out of
+    // date is abandoned instead of finished, so a knob that is still moving never queues up seconds of work.
+    if (analysing.load() && sliceKey() != lastSliceKey) cancelAnalysis = true;
     if (! analysing.load() && sliceKey() != lastSliceKey)
     {
         bool have;
@@ -290,36 +363,83 @@ void EpsilonBounceProcessor::timerCallback()
 }
 
 //==============================================================================
+juce::String EpsilonBounceProcessor::dragKey(int loops) const
+{
+    const auto g = readGroove();
+    juce::String k;
+    k << getLoopSerial() << "|" << loops << "|" << (int) g.groove << "|" << g.amount << "|" << g.swing << "|" << g.tighten << "|" << g.humanizeMs
+      << "|" << g.accent << "|" << g.feelMs << "|" << g.shiftSteps << "|" << (int) g.hold << "|" << (int) g.softCuts << "|" << gridBpm()
+      << "|" << pOutput->load() << "|" << rate << "|" << learnSerial.load();
+    return k;
+}
+
+// Renders the drag-out WAV into memory. Thread-safe: it works on a snapshot of the loop and the settings.
+juce::MemoryBlock EpsilonBounceProcessor::renderDragBytes(std::shared_ptr<const bounce::LoopData> loop, const bounce::GrooveSettings& g,
+                                                         double bpm, double outRate, float gain, int loops)
+{
+    juce::MemoryBlock bytes;
+    if (! loop || loop->slices.empty()) return bytes;
+    bounce::Player p;
+    p.prepare(outRate, 512);
+    p.update(*loop, g, bpm);
+    const double sps = bpm / 60.0 * 4.0 / outRate;
+    const int total = (int) std::floor(loops * loop->bars * bounce::stepsPerBar / sps);   // whole loops at the grid speed
+    if (total <= 0) return bytes;
+    juce::AudioBuffer<float> out(2, total);
+    out.clear();
+    for (int pos = 0; pos < total; pos += 512)
+        p.render(*loop, out.getWritePointer(0) + pos, out.getWritePointer(1) + pos, juce::jmin(512, total - pos), pos * sps, sps, gain);
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::MemoryOutputStream>(bytes, false);
+    auto writer = wav.createWriterFor(stream, juce::AudioFormatWriterOptions{}.withSampleRate(outRate).withNumChannels(2).withBitsPerSample(24));
+    if (writer == nullptr || ! writer->writeFromAudioSampleBuffer(out, 0, total)) bytes.reset();
+    return bytes;
+}
+
+// Called when the mouse reaches the Drag out button: by the time the drag starts, the audio is ready.
+void EpsilonBounceProcessor::prepareDragOut(int loops)
+{
+    const auto key = dragKey(loops);
+    {
+        const juce::ScopedLock sl(loopLock);
+        if (dragCacheKey == key || dragPendingKey == key) return;
+        dragPendingKey = key;
+    }
+    auto loop = getLoop();
+    const auto g = readGroove();
+    const double bpm = gridBpm(), outRate = rate > 0 ? rate : 44100.0;
+    const float gain = juce::Decibels::decibelsToGain(pOutput->load());
+    encoder.addJob([this, loop, g, bpm, outRate, gain, loops, key]
+    {
+        auto bytes = renderDragBytes(loop, g, bpm, outRate, gain, loops);
+        const juce::ScopedLock sl(loopLock);
+        if (dragPendingKey == key) { dragCache = std::move(bytes); dragCacheKey = key; dragPendingKey.clear(); }
+    });
+}
+
 juce::File EpsilonBounceProcessor::renderToFile(int loops)
 {
     auto loop = getLoop();
     if (! loop || loop->slices.empty()) return {};
-    const double bpm = gridBpm();
-    const double hostTempo = playbackBpm();
-    const double outRate = rate > 0 ? rate : 44100.0;
-    bounce::Player p;
-    p.prepare(outRate, 512);
-    p.update(*loop, readGroove(), bpm);
-    const double sps = bpm / 60.0 * 4.0 / outRate;
-    const int total = (int) std::floor(loops * loop->bars * bounce::stepsPerBar / sps);   // whole loops at the grid speed
-    juce::AudioBuffer<float> out(2, total);
-    out.clear();
-    const float gain = juce::Decibels::decibelsToGain(pOutput->load());
-    for (int pos = 0; pos < total; pos += 512)
-        p.render(*loop, out.getWritePointer(0) + pos, out.getWritePointer(1) + pos, juce::jmin(512, total - pos), pos * sps, sps, gain);
+    const auto key = dragKey(loops);
+    juce::MemoryBlock bytes;
+    {
+        const juce::ScopedLock sl(loopLock);
+        if (dragCacheKey == key) bytes = dragCache;
+    }
+    if (bytes.isEmpty())
+        bytes = renderDragBytes(loop, readGroove(), gridBpm(), rate > 0 ? rate : 44100.0, juce::Decibels::decibelsToGain(pOutput->load()), loops);
+    if (bytes.isEmpty()) return {};
+    {
+        const juce::ScopedLock sl(loopLock);
+        dragCache = bytes; dragCacheKey = key;
+    }
 
+    const double hostTempo = playbackBpm();
     const auto grooveName = juce::String(bounce::grooveName(readGroove().groove)).toLowerCase();
     // Kept in Music/Epsilon Sounds/Epsilon Bounce/, not temp: FL Studio links dragged-in audio by its
     // path, so a temp file would later go missing from the project. Same audio reuses its file;
     // different audio gets a new name, so a file a project already uses is never overwritten.
-    juce::MemoryBlock bytes;
-    {
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::MemoryOutputStream>(bytes, false);
-        auto writer = wav.createWriterFor(stream, juce::AudioFormatWriterOptions{}.withSampleRate(outRate)
-                                                      .withNumChannels(2).withBitsPerSample(24));
-        if (writer == nullptr || ! writer->writeFromAudioSampleBuffer(out, 0, total)) return {};
-    }
     auto dir = juce::File::getSpecialLocation(juce::File::userMusicDirectory).getChildFile("Epsilon Sounds").getChildFile("Epsilon Bounce");
     if (! dir.createDirectory()) return {};
     const auto base = juce::File::createLegalFileName(loopName + " - " + grooveName + " " + juce::String(juce::roundToInt(hostTempo)) + " BPM"
@@ -327,8 +447,11 @@ juce::File EpsilonBounceProcessor::renderToFile(int loops)
     auto file = dir.getChildFile(base + ".wav");
     for (int n = 2; file.existsAsFile(); ++n)
     {
-        juce::MemoryBlock existing;
-        if (file.getSize() == (juce::int64) bytes.getSize() && file.loadFileAsData(existing) && existing == bytes) return file;
+        if (file.getSize() == (juce::int64) bytes.getSize())
+        {
+            juce::MemoryBlock existing;
+            if (file.loadFileAsData(existing) && existing == bytes) return file;
+        }
         file = dir.getChildFile(base + " (" + juce::String(n) + ").wav");
     }
     return file.replaceWithData(bytes.getData(), bytes.getSize()) ? file : juce::File();
@@ -388,6 +511,7 @@ juce::String EpsilonBounceProcessor::learnFromFile(const juce::File& file)
     bounce::AnalysisSettings a;
     a.sensitivity = 0.6f;     // catch ghost notes: they carry most of a groove's feel
     a.barsHint = barsChoices[juce::jlimit(0, 4, juce::roundToInt(pBars->load()))];
+    a.tempoHint = analysisTempoHint();   // your drum loop was most likely bounced at the project tempo
     learning = true;
     worker.addJob([this, l = std::move(l), r = std::move(r), sr, a, name]() mutable
     {
@@ -399,12 +523,23 @@ juce::String EpsilonBounceProcessor::learnFromFile(const juce::File& file)
             if (info.valid)
             {
                 setLearned(res.groove, info);
-                if (auto* p = state.getParameter("groove"))
+                // Lock: the loop's own timing is replaced by the drums' pocket, exactly as the drums play it.
+                // Tighten 100 % strips the loop's old feel first; nothing is added on top.
+                auto set = [this](const char* id, float plain)
                 {
-                    p->beginChangeGesture();
-                    p->setValueNotifyingHost(p->convertTo0to1((float) bounce::Groove::learned));
-                    p->endChangeGesture();
-                }
+                    if (auto* p = state.getParameter(id))
+                    {
+                        p->beginChangeGesture();
+                        p->setValueNotifyingHost(p->convertTo0to1(plain));
+                        p->endChangeGesture();
+                    }
+                };
+                set("groove", (float) bounce::Groove::learned);
+                set("amount", 100.0f);
+                set("tighten", 100.0f);
+                set("swing", 0.0f);
+                set("humanize", 0.0f);
+                set("feel", 0.0f);
                 currentPreset = -1;
             }
             else
@@ -446,34 +581,28 @@ void EpsilonBounceProcessor::getStateInformation(juce::MemoryBlock& dest)
     const juce::ScopedLock sl(loopLock);
     if (! rawL.empty())
     {
-        // the loop travels with the session, FLAC-compressed
-        juce::MemoryBlock flacData;
-        {
-            auto* mos = new juce::MemoryOutputStream(flacData, false);
-            juce::FlacAudioFormat flac;
-            std::unique_ptr<juce::AudioFormatWriter> w(flac.createWriterFor(mos, rawRate, 2, 24, {}, 0));
-            if (w != nullptr)
-            {
-                const float* chans[] { rawL.data(), rawR.data() };
-                w->writeFromFloatArrays(chans, 2, (int) rawL.size());
-            }
-            else delete mos;
-        }
+        // the loop travels with the session, FLAC-compressed: encoded once per loop, not on every save
+        if (flacFor != rawSerial) { flacCache = encodeFlac(rawL, rawR, rawRate); flacFor = rawSerial; }
         juce::ValueTree audio("Loop");
         audio.setProperty("name", loopName, nullptr);
-        audio.setProperty("flac", juce::var(flacData), nullptr);
+        audio.setProperty("flac", juce::var(flacCache), nullptr);
         tree.appendChild(audio, nullptr);
     }
-    if (auto xml = tree.createXml())
-        copyXmlToBinary(*xml, dest);
+    // Binary, not XML: the loop is megabytes, and base64-in-XML made every host save slow.
+    juce::MemoryOutputStream out(dest, false);
+    out.write(stateMagic, 4);
+    tree.writeToStream(out);
 }
 
 void EpsilonBounceProcessor::setStateInformation(const void* data, int size)
 {
-    auto xml = getXmlFromBinary(data, size);
-    if (xml == nullptr) return;
-    auto tree = juce::ValueTree::fromXml(*xml);
-    if (! tree.isValid()) return;
+    if (data == nullptr || size <= 0) return;
+    juce::ValueTree tree;
+    if (size > 4 && std::memcmp(data, stateMagic, 4) == 0)
+        tree = juce::ValueTree::readFromData(static_cast<const char*>(data) + 4, (size_t) size - 4);
+    else if (auto xml = getXmlFromBinary(data, size))   // sessions saved by 1.3 and earlier
+        tree = juce::ValueTree::fromXml(*xml);
+    if (! tree.isValid() || ! tree.hasType(state.state.getType())) return;
     auto audio = tree.getChildWithName("Loop");
     if (audio.isValid()) tree.removeChild(audio, nullptr);
     auto lt = tree.getChildWithName("Learned");
@@ -510,6 +639,9 @@ void EpsilonBounceProcessor::setStateInformation(const void* data, int size)
             r->read(&buf, 0, n, 0, true, true);
             setRawAudio({ buf.getReadPointer(0), buf.getReadPointer(0) + n }, { buf.getReadPointer(1), buf.getReadPointer(1) + n },
                         r->sampleRate, audio.getProperty("name").toString());
+            const juce::ScopedLock sl(loopLock);
+            flacCache = *mb;              // the session already holds it encoded
+            flacFor = rawSerial;
         }
     }
 }

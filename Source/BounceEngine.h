@@ -203,38 +203,48 @@ struct LoopData
     double bpm = 120.0;                 // the loop's own tempo, from its length and bar count
     std::vector<Slice> slices;
     std::vector<float> overview;        // 512 peak values for the waveform display
-    double samplesPerStep() const { return (double) length / (bars * stepsPerBar); }
+    double stepSamples = 0.0;           // one 16th, in samples: length / (bars * 16), or exact from the project tempo
+    double samplesPerStep() const { return stepSamples > 0.0 ? stepSamples : (double) length / (bars * stepsPerBar); }
 };
 
 namespace detail
 {
-inline void fft(std::vector<std::complex<float>>& a)
+// Radix-2 FFT with a precomputed twiddle table (exact, and no complex multiply chain per butterfly).
+struct FFT
 {
-    const auto n = a.size();
-    for (size_t i = 1, j = 0; i < n; ++i)
+    explicit FFT(size_t size) : n(size), tw(size / 2), rev(size)
     {
-        auto bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        if (i < j) std::swap(a[i], a[j]);
-    }
-    for (size_t len = 2; len <= n; len <<= 1)
-    {
-        const auto ang = -2.0 * pi / (double) len;
-        const std::complex<float> wl((float) std::cos(ang), (float) std::sin(ang));
-        for (size_t i = 0; i < n; i += len)
+        for (size_t k = 0; k < n / 2; ++k) tw[k] = { (float) std::cos(-2.0 * pi * k / n), (float) std::sin(-2.0 * pi * k / n) };
+        for (size_t i = 0, j = 0; i < n; ++i)
         {
-            std::complex<float> w(1.0f, 0.0f);
-            for (size_t k = 0; k < len / 2; ++k)
-            {
-                const auto u = a[i + k], v = a[i + k + len / 2] * w;
-                a[i + k] = u + v;
-                a[i + k + len / 2] = u - v;
-                w *= wl;
-            }
+            rev[i] = j;
+            auto bit = n >> 1;
+            for (; j & bit; bit >>= 1) j ^= bit;
+            j ^= bit;
         }
     }
-}
+    void operator()(std::vector<std::complex<float>>& a) const
+    {
+        for (size_t i = 0; i < n; ++i) if (i < rev[i]) std::swap(a[i], a[rev[i]]);
+        for (size_t len = 2; len <= n; len <<= 1)
+        {
+            const size_t stride = n / len, half = len / 2;
+            for (size_t i = 0; i < n; i += len)
+                for (size_t k = 0; k < half; ++k)
+                {
+                    const auto u = a[i + k], v = a[i + k + half] * tw[k * stride];
+                    a[i + k] = u + v;
+                    a[i + k + half] = u - v;
+                }
+        }
+    }
+    size_t n;
+    std::vector<std::complex<float>> tw;
+    std::vector<size_t> rev;
+};
+inline void fft(std::vector<std::complex<float>>& a) { FFT f(a.size()); f(a); }
+// |z| without std::abs's overflow-safe hypot (3-5x slower, and these values can't overflow)
+inline float mag(std::complex<float> z) { return std::sqrt(z.real() * z.real() + z.imag() * z.imag()); }
 } // namespace detail
 
 // Picks the bar count that puts the loop's tempo in a 85-170 BPM window (trap, drill and dembow all
@@ -244,7 +254,7 @@ inline int chooseBars(int length, double sampleRate, int barsHint)
     if (barsHint > 0) return barsHint;
     const double seconds = length / sampleRate;
     int best = 1; double bestScore = 1e9;
-    for (int b : { 1, 2, 4, 8 })
+    for (int b : { 1, 2, 4, 8, 16, 32 })
     {
         const double bpm = 240.0 * b / seconds;
         const double score = bpm < 85.0 ? (85.0 - bpm) * 2.0 : bpm > 170.0 ? (bpm - 170.0) * 2.0 : std::abs(bpm - 128.0) * 0.01;
@@ -256,6 +266,9 @@ inline int chooseBars(int length, double sampleRate, int barsHint)
 struct AnalysisSettings
 {
     int barsHint = 0;            // 0 = auto
+    double tempoHint = 0.0;      // the project's tempo, if known: loops made in it (most are) get an exact grid,
+                                 // even with a reverb tail or a few ms of silence at the end
+    const std::atomic<bool>* cancel = nullptr;   // set by the caller to abandon a run that is out of date
     float sensitivity = 0.5f;    // 0..1, more = more slices
     double prerollMs = 3.0;      // drums: play this much before each detected onset so attacks stay intact
     Material material = Material::drums;
@@ -306,6 +319,25 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
 
     data->bars = chooseBars(n, data->sampleRate, settings.barsHint);
     data->bpm = 240.0 * data->bars / (n / data->sampleRate);
+    data->stepSamples = (double) n / (data->bars * stepsPerBar);
+    if (settings.tempoHint > 0.0)
+    {
+        // Made at the project tempo? Then its length is a whole number of bars, plus at most a short tail.
+        const double barLen = 240.0 / settings.tempoHint * data->sampleRate;
+        const double bars = n / barLen;
+        for (int b : { 1, 2, 4, 8, 16, 32 })
+        {
+            if (settings.barsHint > 0 && b != settings.barsHint) continue;
+            if (bars >= b * 0.985 && bars <= b + std::min(0.5, 0.25 * b))   // up to a quarter of the loop (max 2 beats) of tail
+            {
+                data->bars = b;
+                data->bpm = settings.tempoHint;
+                data->stepSamples = barLen / stepsPerBar;
+                break;
+            }
+        }
+    }
+    auto cancelled = [&settings] { return settings.cancel != nullptr && settings.cancel->load(std::memory_order_relaxed); };
 
     std::vector<float> mono((size_t) n);
     for (int i = 0; i < n; ++i) mono[(size_t) i] = 0.5f * (data->left[(size_t) i] + data->right[(size_t) i]);
@@ -325,19 +357,21 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
     const int frames = 1 + (n - 1) / hop;
     std::vector<float> flux((size_t) frames, 0.0f), prev(frame / 2 + 1, 0.0f), mag(frame / 2 + 1);
     std::vector<std::complex<float>> buf(frame);
+    const detail::FFT fftShort(frame);
     for (int f = 0; f < frames; ++f)
     {
+        if ((f & 255) == 0 && cancelled()) return nullptr;
         const int centre = f * hop;
         for (int i = 0; i < frame; ++i)
         {
             const int idx = centre - frame / 2 + i;
             buf[(size_t) i] = { (idx >= 0 && idx < n ? mono[(size_t) idx] : 0.0f) * window[(size_t) i], 0.0f };
         }
-        detail::fft(buf);
+        fftShort(buf);
         float sum = 0.0f;
         for (int k = 1; k <= frame / 2; ++k)
         {
-            mag[(size_t) k] = std::log1p(100.0f * std::abs(buf[(size_t) k]));
+            mag[(size_t) k] = std::log1p(100.0f * detail::mag(buf[(size_t) k]));
             const auto d = mag[(size_t) k] - prev[(size_t) k];
             if (d > 0) sum += d;
         }
@@ -355,20 +389,25 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
         for (int i = 0; i < cf; ++i) cw[(size_t) i] = 0.5f - 0.5f * (float) std::cos(2.0 * pi * i / cf);
         std::vector<std::complex<float>> cb(cf);
         std::vector<float> cmag(cf / 2 + 1, 0.0f);
-        for (int f = 0; f < frames; ++f)
+        const detail::FFT fftLong(cf);
+        // Harmony moves slowly next to a 4096-sample window: one chroma frame every 4 hops (~21 ms at 48 kHz)
+        // is all the novelty curve can use, and it is 4x less work. The frames in between share it.
+        constexpr int chromaEvery = 4;
+        for (int f = 0; f < frames; f += chromaEvery)
         {
-            const int centre = f * hop;
+            if ((f & 63) == 0 && cancelled()) return nullptr;
+            const int centre = f * hop + (chromaEvery / 2) * hop;
             for (int i = 0; i < cf; ++i)
             {
                 const int idx = centre - cf / 2 + i;
                 cb[(size_t) i] = { (idx >= 0 && idx < n ? mono[(size_t) idx] : 0.0f) * cw[(size_t) i], 0.0f };
             }
-            detail::fft(cb);
+            fftLong(cb);
             // Spectral peaks only, each frequency refined by parabolic interpolation, so a note maps to
             // one pitch class no matter where it falls between FFT bins (and at any sample rate).
             std::array<float, 12> c {};
             float frameMax = 1e-12f;
-            for (int k = 1; k < cf / 2; ++k) { const float a = std::abs(cb[(size_t) k]); cmag[(size_t) k] = a; frameMax = std::max(frameMax, a); }
+            for (int k = 1; k < cf / 2; ++k) { const float a = detail::mag(cb[(size_t) k]); cmag[(size_t) k] = a; frameMax = std::max(frameMax, a); }
             for (int k = 2; k < cf / 2 - 1; ++k)
             {
                 const float a = cmag[(size_t) k];
@@ -385,7 +424,7 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
             for (auto& v : c) { v = std::sqrt(v); norm += v * v; }
             norm = std::sqrt(norm);
             if (norm > 1e-6f) for (auto& v : c) v /= norm;
-            chroma[(size_t) f] = c;
+            for (int k = f; k < std::min(frames, f + chromaEvery); ++k) chroma[(size_t) k] = c;
         }
     }
     float maxFlux = 0.0f;
@@ -415,27 +454,46 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
     // Refine each to its attack start: walk back to where the envelope drops under 15 % of the peak.
     struct Hit { int at; float peak; };
     std::vector<Hit> hits;
+    std::vector<float> env;
+    std::vector<int> envIdx;
     for (auto f : onsetFrames)
     {
         const int c = f * hop;
         const int lo = std::max(0, c - frame / 2), hi = std::min(n, c + hop * 2);
         float pk = 0.0f; int pkAt = c;
         for (int i = lo; i < hi; ++i) if (std::abs(mono[(size_t) i]) > pk) { pk = std::abs(mono[(size_t) i]); pkAt = i; }
-        int at = pkAt;
-        for (int i = pkAt; i > lo; --i)
+        // Walk back from the peak to where the attack starts: the last moment the envelope (a 5 ms trailing
+        // max of |x|, so a sounding note's zero crossings don't read as silence) was still near the level
+        // before the hit. Measuring from that level, not from zero, finds a note that starts while the
+        // previous one still rings (legato melodies, hats over an 808) instead of placing it up to 10 ms early.
+        const int w = std::max(8, (int) (0.005 * data->sampleRate));
+        const int e0 = std::max(0, lo - w);
+        env.assign((size_t) (pkAt - e0 + 1), 0.0f);
         {
-            if (std::abs(mono[(size_t) i]) < 0.15f * pk)
+            std::vector<int>& dq = envIdx; dq.clear();
+            size_t head = 0;
+            for (int i = e0; i <= pkAt; ++i)
             {
-                bool quiet = true;
-                const int q = std::max(lo, i - (int) (0.001 * data->sampleRate));
-                for (int k = q; k < i; ++k) if (std::abs(mono[(size_t) k]) > 0.15f * pk) { quiet = false; break; }
-                if (quiet) { at = i; break; }
+                const float v = std::abs(mono[(size_t) i]);
+                while (dq.size() > head && std::abs(mono[(size_t) dq.back()]) <= v) dq.pop_back();
+                if (dq.size() < head) head = dq.size();
+                dq.push_back(i);
+                while (dq[head] <= i - w) ++head;
+                env[(size_t) (i - e0)] = std::abs(mono[(size_t) dq[head]]);
             }
-            at = i;
         }
+        float before = pk;
+        for (int i = lo; i <= pkAt; ++i) before = std::min(before, env[(size_t) (i - e0)]);
+        const float thresh = before + 0.15f * (pk - before);
+        int at = lo;
+        for (int i = pkAt; i > lo; --i)
+            if (env[(size_t) (i - 1 - e0)] < thresh) { at = i; break; }
         if (hits.empty() || at - hits.back().at > (int) (0.03 * data->sampleRate)) hits.push_back({ at, pk });
     }
 
+#ifdef BOUNCE_DEBUG_HITS
+    for (auto& h : hits) std::printf("hit %.3f steps pk %.2f\n", h.at / data->samplesPerStep(), h.peak);
+#endif
     const double sps = data->samplesPerStep();
     // ---- auto-align: where the loudest hits (kicks, snares - the ones that are rarely swung) sit
     // relative to the 16th grid. Their weighted median is the loop's offset; it is applied only when
@@ -445,13 +503,21 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
     if (settings.autoAlign && hits.size() >= 3)
     {
         float maxPk = 0.0f; for (const auto& h : hits) maxPk = std::max(maxPk, h.peak);
+        // Anchors only: hits on beats 1 and 3 (where kicks live). Off-16ths are swung and a backbeat snare is
+        // often laid back: that is the groove, not an offset. Too few of those: any beat.
         std::vector<std::pair<double, double>> devs;   // (deviation in 16ths, weight)
-        for (const auto& h : hits)
-            if (h.peak >= 0.6f * maxPk)
-            {
-                const double x = h.at / sps;
-                devs.push_back({ x - std::round(x), (double) h.peak * h.peak });
-            }
+        for (int every : { 8, 4 })
+        {
+            devs.clear();
+            for (const auto& h : hits)
+                if (h.peak >= 0.6f * maxPk)
+                {
+                    const double x = h.at / sps;
+                    if ((((long) std::lround(x)) % every) != 0) continue;
+                    devs.push_back({ x - std::round(x), (double) h.peak * h.peak });
+                }
+            if (devs.size() >= 3) break;
+        }
         if (devs.size() >= 3)
         {
             std::sort(devs.begin(), devs.end());
@@ -553,6 +619,12 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
         }
     }
     data->material = settings.material;
+    if (cancelled()) return nullptr;
+
+    // a reverb / delay tail past the last bar is not a new hit: it rings out from the last slice
+    const double loopEnd = data->bars * stepsPerBar * sps + alignSamples - 0.01 * data->sampleRate;
+    if (loopEnd < n - 0.02 * data->sampleRate)
+        cuts.erase(std::remove_if(cuts.begin() + 1, cuts.end(), [loopEnd](int c) { return c >= loopEnd; }), cuts.end());
 
     if (cuts.size() > (size_t) maxSlices) cuts.resize((size_t) maxSlices);
     const int totalSteps = data->bars * stepsPerBar;
@@ -571,6 +643,55 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
         data->slices.push_back(sl);
     }
     return data;
+}
+
+//==============================================================================
+// What is this loop? Drums (noisy, short hits with air between them) or a melody / chords / flipped
+// sample (tonal, sustained). Two cues over the loud parts of the first 20 s:
+//  - tonalness: spectral flatness 150 Hz - 8 kHz (white noise ~0.6+, a chord ~0.05)
+//  - sustain:   how loud the typical moment is next to the loudest moments (hits decay to near-silence)
+struct MaterialGuess { Material material = Material::drums; float flatness = 1.0f, sustain = 0.0f; };
+
+inline MaterialGuess detectMaterial(const std::vector<float>& left, const std::vector<float>& right, double sr)
+{
+    MaterialGuess g;
+    const int n = (int) std::min(left.size(), (size_t) (20.0 * sr));
+    constexpr int N = 2048;
+    if (n < N || sr <= 0) return g;
+    const detail::FFT fft(N);
+    std::vector<std::complex<float>> buf(N);
+    std::vector<float> win(N), rms, flat;
+    for (int i = 0; i < N; ++i) win[(size_t) i] = 0.5f - 0.5f * (float) std::cos(2.0 * pi * i / N);
+    const int k0 = std::max(1, (int) (150.0 * N / sr)), k1 = std::min(N / 2 - 1, (int) (8000.0 * N / sr));
+    for (int a = 0; a + N <= n; a += N / 2)
+    {
+        double e = 0.0;
+        for (int i = 0; i < N; ++i)
+        {
+            const float v = 0.5f * (left[(size_t) (a + i)] + (right.size() > (size_t) (a + i) ? right[(size_t) (a + i)] : left[(size_t) (a + i)]));
+            e += v * v;
+            buf[(size_t) i] = { v * win[(size_t) i], 0.0f };
+        }
+        rms.push_back((float) std::sqrt(e / N));
+        fft(buf);
+        double logSum = 0.0, sum = 0.0;
+        for (int k = k0; k <= k1; ++k) { const double m = detail::mag(buf[(size_t) k]) + 1e-9; logSum += std::log(m); sum += m; }
+        const int cnt = k1 - k0 + 1;
+        flat.push_back((float) (std::exp(logSum / cnt) / (sum / cnt)));
+    }
+    if (rms.size() < 4) return g;
+    std::vector<float> sorted = rms;
+    std::sort(sorted.begin(), sorted.end());
+    const float p95 = sorted[(size_t) (sorted.size() * 95 / 100)], median = sorted[sorted.size() / 2];
+    if (p95 < 1e-5f) return g;
+    g.sustain = median / p95;
+    std::vector<float> loudFlat;
+    for (size_t i = 0; i < rms.size(); ++i) if (rms[i] > 0.25f * p95) loudFlat.push_back(flat[i]);
+    if (loudFlat.empty()) return g;
+    std::nth_element(loudFlat.begin(), loudFlat.begin() + (long) loudFlat.size() / 2, loudFlat.end());
+    g.flatness = loudFlat[loudFlat.size() / 2];
+    g.material = (g.flatness < 0.22f && g.sustain > 0.12f) || g.flatness < 0.08f ? Material::melodic : Material::drums;
+    return g;
 }
 
 //==============================================================================

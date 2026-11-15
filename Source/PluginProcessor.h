@@ -31,6 +31,8 @@ public:
 
     // ---- message thread API (editor) ----
     juce::String loadFile(const juce::File& file);          // returns an error message, empty on success
+    juce::String getLoadNote() const { return loadNote; }   // e.g. "Melody detected: cutting on note changes"
+    int getNoteSerial() const { return noteSerial; }
     std::shared_ptr<const bounce::LoopData> getLoop() const;
     juce::String getLoopName() const { return loopName; }
     bounce::GrooveSettings currentGroove() const;
@@ -41,6 +43,7 @@ public:
     bool isPreviewing() const { return preview.load(); }
     bool hostIsPlaying() const { return hostPlaying.load(); }
     juce::File renderToFile(int loops);                     // offline bounce for drag-out
+    void prepareDragOut(int loops);                         // render it ahead, in the background (mouse over Drag out)
     int getLoopSerial() const { return loopSerial.load(); }
     float getCpuPercent() const { return cpu.load(); }
     double timeFactor() const;                              // 0.5 half-time, 1, 2 double-time
@@ -76,11 +79,27 @@ private:
     double rawRate = 44100.0;
     juce::String loopName;
     std::atomic<bool> analysing { false };
+    std::atomic<bool> cancelAnalysis { false };              // a slicing control moved again: drop the run in flight
+    // The loop as the session stores it (FLAC), encoded once per loaded loop on the worker thread.
+    // FL Studio asks for the state often (undo history, autosave); re-encoding 60 s of audio every time froze the UI.
+    juce::MemoryBlock flacCache;                             // guarded by loopLock
+    int flacFor = -1, rawSerial = 0;                         // guarded by loopLock: which raw audio the cache holds
+    void encodeFlacCache();
+    static juce::MemoryBlock encodeFlac(const std::vector<float>& l, const std::vector<float>& r, double sr);
     std::atomic<int> loopSerial { 0 };
     juce::ThreadPool worker { 1 };
+    juce::ThreadPool encoder { 1 };                          // session FLAC, in parallel with the analysis
     juce::String lastSliceKey;                               // re-analyse when any slicing control changes
     juce::String sliceKey() const;
     int currentPreset = -1;
+    juce::String loadNote;
+    int noteSerial = 0;
+    bool detectOnNextAnalysis = false;
+    juce::MemoryBlock dragCache;                             // guarded by loopLock
+    juce::String dragCacheKey, dragPendingKey;               // guarded by loopLock
+    juce::String dragKey(int loops) const;
+    static juce::MemoryBlock renderDragBytes(std::shared_ptr<const bounce::LoopData>, const bounce::GrooveSettings&, double bpm, double outRate, float gain, int loops);
+    double analysisTempoHint() const;
 
     // learned groove, readable from the audio thread without locks
     std::array<std::atomic<float>, bounce::stepsPerBar * 2> learnedAtoms {};

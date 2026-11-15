@@ -8,7 +8,13 @@ Part of the Epsilon line by **Epsilon Sounds**.
 
 ![Epsilon Bounce](docs/epsilon-bounce-editor.png)
 
-## Lock a melody to your drums
+## Lock a melody to your drums (3 moves)
+
+1. **Drop the melody** (or chords, or a flipped sample) on the grid. Bounce hears whether it's drums or a melody and picks the cut mode for you: notes and chord changes for melodies, hits for drums.
+2. **Drop your drum loop on _Match drums_.** Bounce learns the drums' exact pocket (swing, laid-back snares, pushed hats) and locks the melody into it: Tighten 100 %, Amount 100 %, nothing added on top. Your drum hits show as markers along the top of the grid.
+3. **Drag out** the locked loop into FL, or just keep Bounce playing on the channel.
+
+Both loops are read on your project's tempo when they were made in it, so a reverb tail or a few ms of silence at the end no longer pushes the grid off. Loops up to 32 bars.
 
 A sample that doesn't sit with your beat is one of four problems; Bounce fixes each:
 
@@ -50,10 +56,22 @@ The loop is saved inside your session (FLAC-compressed), so projects reopen with
 **CMake:** `git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git JUCE`, then
 `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build`.
 
+## Performance (v1.4)
+
+Measured on the test machine with a 59-second melody at 48 kHz, 128-sample blocks (CI repeats this on an Intel Mac):
+
+| | before 1.4 | 1.4 |
+|---|---|---|
+| FL saving the project (undo, autosave) | 265 ms freeze, every save | 1.5 ms |
+| Analysing the melody | 3.5 s, and every Sensitivity move queued another | 1.4 s, off the UI thread; an out-of-date run is dropped |
+| Starting a drag-out | 118 ms | 17 ms (rendered while the mouse is on the button) |
+| A playback frame of the grid | repainted the panel behind it too | grid only, 1.1 ms |
+| Audio thread, a knob automated every block | 0.06 ms of 2.67 | unchanged |
+
 ## Tests
 
-- `BounceEngineTests` — 88 checks at 44.1 and 48 kHz: onset accuracy (< 1.5 ms), every hit on the right 16th, playback timing (< 1 ms), each groove's offsets, all 13 pockets distinct and bounded, Groove Learn recovering a known swing and late snare, melodic cutting finding all smooth chord changes (and not splitting a vibrato note), grid cuts on zero crossings, auto-align of a 25 ms offset, Hold filling gaps with no clicks, tempo follow, humanize stability, level bounds, silence, and speed (render < 2 % of a core, analysis < 2 s).
-- `BounceBench` (`-DBOUNCE_BUILD_BENCH=ON`) — drives the real plugin like a DAW: loads a WAV, plays it on a 140 BPM playhead, checks every groove at max, all 42 presets, half/double time, learning from a reference WAV, melodic / grid cutting and Hold through the real plugin (half-time chords: no gaps, no clicks), stopped/preview behaviour, session round-trip with the loop inside, drag-out render, and writes UI snapshots.
+- `BounceEngineTests` — 101 checks, including (1.4) drums-vs-melody detection, a 16-bar loop read as 16 bars, a drum loop with a reverb tail landing exactly on its 16ths, a 92 BPM sample keeping its own grid in a 140 project, cancelled analysis, speed, and a straight melody locked note-for-note into a learned swung pocket. Also the original 88 at 44.1 and 48 kHz: onset accuracy (< 1.5 ms), every hit on the right 16th, playback timing (< 1 ms), each groove's offsets, all 13 pockets distinct and bounded, Groove Learn recovering a known swing and late snare, melodic cutting finding all smooth chord changes (and not splitting a vibrato note), grid cuts on zero crossings, auto-align of a 25 ms offset, Hold filling gaps with no clicks, tempo follow, humanize stability, level bounds, silence, and speed (render < 2 % of a core, analysis < 2 s).
+- `BounceBench` (`-DBOUNCE_BUILD_BENCH=ON`; on Linux add `-DBOUNCE_LINUX_BENCH=ON`) — starts with the lag profile above (load, analysis, host save and reopen, audio blocks under automation, drag-out, grid repaint), then drives the real plugin like a DAW: loads a WAV, plays it on a 140 BPM playhead, checks every groove at max, all 42 presets, half/double time, learning from a reference WAV, melodic / grid cutting and Hold through the real plugin (half-time chords: no gaps, no clicks), stopped/preview behaviour, session round-trip with the loop inside, drag-out render, and writes UI snapshots.
 - CI (`.github/workflows/build.yml`) builds universal VST3/AU/Standalone on macOS 15 and runs all of the above plus `auval` and `pluginval` at strictness 8; `perf.yml` times the engine on Intel and Apple Silicon Macs.
 
 ## Look

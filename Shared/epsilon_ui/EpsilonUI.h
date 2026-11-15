@@ -200,6 +200,8 @@ public:
     FooterBar(Tier t, juce::String versionText) : pal(palette(t)), version(std::move(versionText)) { setOpaque(true); startTimerHz(2); }
     std::function<juce::String()> statusText;   // e.g. "Live" / "Preview 140 BPM"
     std::function<float()> cpuPercent;
+    std::function<juce::String()> messageText;    // right side: what just happened ("Locked to ...", a load problem)
+    std::function<bool()> messageIsProblem;       // problems in the warning colour
 
     void paint(juce::Graphics& g) override
     {
@@ -213,6 +215,15 @@ public:
         g.setFont(caption());
         g.setColour(pal.inkMuted);
         g.drawText(juce::String::fromUTF8(s.toRawUTF8()), r, juce::Justification::centredLeft, false);
+        if (messageText)
+        {
+            const auto m = messageText();
+            if (m.isNotEmpty())
+            {
+                g.setColour(messageIsProblem && messageIsProblem() ? pal.meterHot : pal.ink);
+                g.drawText(m, r.withTrimmedLeft(r.getWidth() / 3), juce::Justification::centredRight, true);
+            }
+        }
        #if ! defined(__OPTIMIZE__) && ! defined(NDEBUG) && ! defined(_MSC_VER)
         g.setColour(pal.meterClip);
         g.setFont(font(Weight::Bold, 11.5f));
