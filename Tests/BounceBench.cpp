@@ -317,6 +317,92 @@ int main(int argc, char** argv)
             for (int i = 0; i < 400 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
         }
 
+        // ---- v1.4: two slots - melody + drums, each draggable in and out, locked into one pocket
+        {
+            using P = EpsilonBounceProcessor;
+            auto setChoice = [&p](const char* id, float v) { auto* q = p.state.getParameter(id); q->setValueNotifyingHost(q->convertTo0to1(v)); };
+            auto waitSlot = [&p](int slot, int before)
+            {
+                for (int i = 0; i < 400 && (p.getLoopSerial(slot) == before || p.isAnalysing(slot)); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+                return p.getLoopSerial(slot) != before;
+            };
+            const double sps = 60.0 / 140.0 / 4.0 * sr;
+            setChoice("material", 0.0f);
+            int ms = p.getLoopSerial(P::melody);
+            check(p.loadFile(writeLoop(sr), P::melody).isEmpty() && waitSlot(P::melody, ms), tag + "slots: melody lane loads");
+            for (int i = 0; i < 30; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            p.applyPreset(0);                                  // straight, tighten 100
+            check(! p.haveBoth() && p.leaderOf(P::melody) < 0, tag + "slots: one loop alone rides the chosen groove");
+
+            const auto rf = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-reference.wav");   // 63 % swing drums
+            const int ds = p.getLoopSerial(P::drums);
+            check(p.loadFile(rf, P::drums).isEmpty() && waitSlot(P::drums, ds), tag + "slots: drums lane loads");
+            const auto dInfo = p.getPocketInfo(P::drums);
+            check(p.getLoop(P::drums) && p.getLoop(P::drums)->slices.size() == 32, tag + "slots: drums cut on their 32 hits (" + juce::String(p.getLoop(P::drums) ? (int) p.getLoop(P::drums)->slices.size() : 0) + ")");
+            check(dInfo.valid && std::abs(dInfo.swingPercent - 63.0f) < 2.5f, tag + "slots: drums' pocket read as " + juce::String(dInfo.swingPercent, 1) + " % swing");
+            check(p.haveBoth() && p.link() == P::Link::drumsLead && p.leads(P::drums) && p.leaderOf(P::melody) == P::drums, tag + "slots: DRUMS LEAD by default, melody follows");
+
+            // melody alone in the output: its off-16th now lands where the drums' off-16ths land
+            setChoice("drumLevel", -60.0f);
+            p.prepareToPlay(sr, 256);
+            auto on = onsets(play(p, head, sr, 8.0));
+            double off = on.size() > 1 ? (on[1] - 3 * sps) / sps : -9.0;
+            check(std::abs(off - 0.26) < 0.04, tag + "DRUMS LEAD: melody's off-16th lands " + juce::String(off, 3) + " late (drums: 0.26)");
+            // drums alone: untouched feel
+            setChoice("drumLevel", 0.0f); setChoice("melLevel", -60.0f);
+            p.prepareToPlay(sr, 256);
+            on = onsets(play(p, head, sr, 8.0));
+            off = on.size() > 1 ? (on[1] - 1 * sps) / sps : -9.0;
+            check(on.size() == 32 && std::abs(off - 0.26) < 0.04, tag + "DRUMS LEAD: drums keep their own feel (" + juce::String((int) on.size()) + " hits, off-16th " + juce::String(off, 3) + ")");
+            // melody leads: the drums are pulled onto the (straight) melody's pocket
+            setChoice("link", 1.0f);
+            check(p.leads(P::melody) && p.leaderOf(P::drums) == P::melody, tag + "MELODY LEADS: drums follow");
+            p.prepareToPlay(sr, 256);
+            on = onsets(play(p, head, sr, 8.0));
+            off = on.size() > 1 ? (on[1] - 1 * sps) / sps : -9.0;
+            check(std::abs(off) < 0.04, tag + "MELODY LEADS: drums' off-16th pulled to the melody's straight pocket (" + juce::String(off, 3) + ")");
+            // groove: both ride the chosen groove (dembow pushes the a-of-1 by 0.20)
+            setChoice("link", 2.0f); setChoice("groove", 1.0f); setChoice("melLevel", 0.0f); setChoice("drumLevel", -60.0f);
+            check(p.leaderOf(P::melody) < 0 && ! p.leads(P::drums), tag + "GROOVE: nobody leads");
+            p.prepareToPlay(sr, 256);
+            on = onsets(play(p, head, sr, 8.0));
+            off = on.size() > 1 ? (on[1] - 3 * sps) / sps : -9.0;
+            check(std::abs(off - 0.20) < 0.03, tag + "GROOVE: melody back on dembow (" + juce::String(off, 3) + ")");
+            setChoice("drumLevel", 0.0f); setChoice("link", 0.0f);
+
+            // both lanes together: finite, sane level
+            p.prepareToPlay(sr, 256);
+            auto both = play(p, head, sr, 8.0, 97);
+            bool fin = true; for (int i = 0; i < both.getNumSamples(); ++i) fin &= std::isfinite(both.getSample(0, i));
+            check(fin && both.getMagnitude(0, both.getNumSamples()) < 1.6f && both.getMagnitude(0, both.getNumSamples()) > 0.3f, tag + "slots: both lanes play together");
+
+            // drag out, one file per lane
+            const auto fm = p.renderToFile(2, P::melody), fd = p.renderToFile(2, P::drums);
+            check(fm.existsAsFile() && fd.existsAsFile() && fm != fd, tag + "drag-out per lane: \"" + fm.getFileName() + "\" and \"" + fd.getFileName() + "\"");
+            check(fm.getFileName().containsIgnoreCase("locked to") && fd.getFileName().containsIgnoreCase("original feel"), tag + "drag-out files say what was done");
+            fm.deleteFile(); fd.deleteFile();
+
+            // session carries both loops and the link
+            juce::MemoryBlock st3;
+            p.getStateInformation(st3);
+            EpsilonBounceProcessor q3;
+            q3.setPlayConfigDetails(0, 2, sr, 256);
+            q3.prepareToPlay(sr, 256);
+            q3.setStateInformation(st3.getData(), (int) st3.getSize());
+            for (int i = 0; i < 600 && (! q3.getLoop(P::melody) || ! q3.getLoop(P::drums) || q3.isAnalysing(P::melody) || q3.isAnalysing(P::drums)); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            check(q3.haveBoth() && q3.getLoopName(P::drums) == p.getLoopName(P::drums) && q3.leaderOf(P::melody) == P::drums,
+                  tag + "session reload brings both lanes back (" + juce::String((int) (st3.getSize() / 1024)) + " KB)");
+
+            // clearing the drums: the melody is on its own groove again
+            p.clearSlot(P::drums);
+            for (int i = 0; i < 30; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            check(! p.haveBoth() && p.getLoop(P::drums) == nullptr && p.leaderOf(P::melody) < 0, tag + "slots: Clear empties a lane");
+            p.prepareToPlay(sr, 256);
+            auto after = play(p, head, sr, 4.0);
+            check(after.getMagnitude(0, after.getNumSamples()) > 0.1f, tag + "slots: melody still plays after the drums are cleared");
+            setChoice("groove", 0.0f);
+        }
+
         if (sr == 48000.0 && snapDir != juce::File())
         {
             snapDir.createDirectory();
@@ -326,11 +412,13 @@ int main(int argc, char** argv)
                 p.loadFile(juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-chords.wav"));
                 waitForLoop(p, ser);
                 p.applyPreset(3);
-                auto* gq = p.state.getParameter("groove"); gq->setValueNotifyingHost(gq->convertTo0to1((float) bounce::Groove::learned));
+                const int dser = p.getLoopSerial(EpsilonBounceProcessor::drums);
+                p.loadFile(juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-reference.wav"), EpsilonBounceProcessor::drums);
+                for (int i = 0; i < 400 && (p.getLoopSerial(EpsilonBounceProcessor::drums) == dser || p.isAnalysing(EpsilonBounceProcessor::drums)); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
                 for (int i = 0; i < 20; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
             }
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
-            ed->setSize(1080, 680);
+            ed->setSize(1160, 780);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(40);
             auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 2.0f);
             juce::PNGImageFormat png;
@@ -341,7 +429,7 @@ int main(int argc, char** argv)
 
             EpsilonBounceProcessor empty;
             std::unique_ptr<juce::AudioProcessorEditor> ed2(empty.createEditor());
-            ed2->setSize(1080, 680);
+            ed2->setSize(1160, 780);
             juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
             auto img2 = ed2->createComponentSnapshot(ed2->getLocalBounds(), true, 2.0f);
             auto file2 = snapDir.getChildFile("epsilon-bounce-empty.png");

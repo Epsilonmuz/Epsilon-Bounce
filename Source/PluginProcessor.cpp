@@ -37,6 +37,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout EpsilonBounceProcessor::crea
     l.add(std::make_unique<AudioParameterInt>(ParameterID { "shift", 3 }, "Shift", -8, 8, 0,
                                               AudioParameterIntAttributes().withStringFromValueFunction([](int v, int) { return v == 0 ? juce::String("0") : (v > 0 ? "+" : "") + juce::String(v) + " /16"; })));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "align", 3 }, "Auto-Align", true));
+    // v1.4: melody + drums slots
+    const auto level = [](float v) { return v <= -59.9f ? juce::String("off") : (v > 0.05f ? "+" : "") + juce::String(v, 1) + " dB"; };
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "link", 4 }, "Pocket", StringArray { "DRUMS LEAD", "MELODY LEADS", "GROOVE" }, 0));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID { "melLevel", 4 }, "Melody Level", NormalisableRange<float>(-60.0f, 6.0f, 0.1f, 2.5f), 0.0f, attr(level)));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID { "drumLevel", 4 }, "Drums Level", NormalisableRange<float>(-60.0f, 6.0f, 0.1f, 2.5f), 0.0f, attr(level)));
     return l;
 }
 
@@ -53,7 +58,9 @@ EpsilonBounceProcessor::EpsilonBounceProcessor()
     pTime = state.getRawParameterValue("time");
     pMaterial = state.getRawParameterValue("material"); pChop = state.getRawParameterValue("chop"); pHold = state.getRawParameterValue("hold");
     pShift = state.getRawParameterValue("shift"); pAlign = state.getRawParameterValue("align");
+    pLink = state.getRawParameterValue("link"); pMelLevel = state.getRawParameterValue("melLevel"); pDrumLevel = state.getRawParameterValue("drumLevel");
     for (auto& a : learnedAtoms) a.store(0.0f);
+    for (auto& sl : slots) for (auto& a : sl.pocket) a.store(0.0f);
     startTimerHz(10);
 }
 
@@ -71,8 +78,8 @@ bool EpsilonBounceProcessor::isBusesLayoutSupported(const BusesLayout& l) const
 void EpsilonBounceProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     rate = sampleRate > 0 ? sampleRate : 44100.0;
-    player.prepare(rate, samplesPerBlock);
-    lastLoop = nullptr; lastBpm = -1.0; expectedStep = -1e9; internalStep = 0.0;
+    for (auto& sl : slots) { sl.player.prepare(rate, samplesPerBlock); sl.lastLoop = nullptr; sl.lastBpm = -1.0; }
+    expectedStep = -1e9; internalStep = 0.0;
 }
 
 bounce::GrooveSettings EpsilonBounceProcessor::readGroove() const
@@ -103,10 +110,69 @@ bool EpsilonBounceProcessor::holdActive() const
     return h == 1 || (h == 0 && material() != bounce::Material::drums);
 }
 
-juce::String EpsilonBounceProcessor::sliceKey() const
+juce::String EpsilonBounceProcessor::sliceKey(int slot) const
 {
+    if (slot == drums) return juce::String(pAlign->load() >= 0.5f ? 1 : 0);      // drums are always cut on their hits
     return juce::String(juce::roundToInt(pSensitivity->load())) + "|" + juce::String(juce::roundToInt(pBars->load())) + "|"
          + juce::String((int) material()) + "|" + juce::String(juce::roundToInt(pChop->load())) + "|" + juce::String(pAlign->load() >= 0.5f ? 1 : 0);
+}
+
+bounce::GrooveTemplate EpsilonBounceProcessor::readPocket(int slot) const
+{
+    bounce::GrooveTemplate t;
+    for (int i = 0; i < bounce::stepsPerBar; ++i)
+    {
+        t.offset[(size_t) i] = slots[(size_t) slot].pocket[(size_t) i].load(std::memory_order_relaxed);
+        t.accentDb[(size_t) i] = slots[(size_t) slot].pocket[(size_t) (i + bounce::stepsPerBar)].load(std::memory_order_relaxed);
+    }
+    return t;
+}
+
+EpsilonBounceProcessor::Link EpsilonBounceProcessor::link() const
+{
+    return (Link) juce::jlimit(0, 2, juce::roundToInt(pLink->load(std::memory_order_relaxed)));
+}
+bool EpsilonBounceProcessor::haveBoth() const
+{
+    return slots[melody].live.load(std::memory_order_relaxed) != nullptr && slots[drums].live.load(std::memory_order_relaxed) != nullptr;
+}
+bool EpsilonBounceProcessor::leads(int slot) const
+{
+    if (! haveBoth()) return false;
+    const auto l = link();
+    return (l == Link::drumsLead && slot == drums) || (l == Link::melodyLeads && slot == melody);
+}
+int EpsilonBounceProcessor::leaderOf(int slot) const
+{
+    if (! haveBoth() || link() == Link::groove) return -1;
+    const int leader = link() == Link::drumsLead ? drums : melody;
+    return leader != slot && slots[(size_t) leader].pocketValid.load(std::memory_order_relaxed) ? leader : -1;
+}
+
+// What a slot plays with. One loop loaded, or Pocket = GROOVE: the chosen groove, as always.
+// Both loaded and one leads: the leader plays with its own timing untouched, the other is placed
+// with the leader's learned pocket (Amount, Tighten, Accent still say how hard it is pulled in).
+bounce::GrooveSettings EpsilonBounceProcessor::grooveFor(int slot) const
+{
+    auto g = readGroove();
+    if (slot == drums)
+    {
+        g.hold = juce::roundToInt(pHold->load(std::memory_order_relaxed)) == 1;
+        g.softCuts = false;
+        g.shiftSteps = 0;
+    }
+    if (leads(slot))
+    {
+        g.amount = 0.0f; g.swing = 0.0f; g.tighten = 0.0f; g.humanizeMs = 0.0f; g.accent = 0.0f; g.feelMs = 0.0f;
+        return g;
+    }
+    const int leader = leaderOf(slot);
+    if (leader >= 0)
+    {
+        g.groove = bounce::Groove::learned;
+        g.learned = readPocket(leader);
+    }
+    return g;
 }
 
 bounce::GrooveTemplate EpsilonBounceProcessor::readLearned() const
@@ -124,7 +190,7 @@ double EpsilonBounceProcessor::timeFactor() const
 {
     return bounce::timeFactor((bounce::TimeMode) juce::jlimit(0, 2, juce::roundToInt(pTime->load(std::memory_order_relaxed))));
 }
-bounce::GrooveSettings EpsilonBounceProcessor::currentGroove() const { return readGroove(); }
+bounce::GrooveSettings EpsilonBounceProcessor::currentGroove() const { return grooveFor(melody); }
 
 double EpsilonBounceProcessor::playbackBpm() const
 {
@@ -146,10 +212,22 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     buffer.clear();
     midi.clear();
 
-    const auto* loop = live.load(std::memory_order_acquire);
-    inUse.store(loop, std::memory_order_release);
-    if (live.load(std::memory_order_acquire) != loop) { inUse.store(nullptr); return; }   // swapped mid-check: skip a block
-    if (loop == nullptr || loop->slices.empty() || frames == 0) { playingSlice.store(-1); return; }
+    // Take both loops for this block (a loop swapped mid-check sits the block out).
+    const bounce::LoopData* loops[numSlots] {};
+    bool any = false;
+    for (int i = 0; i < numSlots; ++i)
+    {
+        auto& sl = slots[(size_t) i];
+        const auto* l = sl.live.load(std::memory_order_acquire);
+        sl.inUse.store(l, std::memory_order_release);
+        if (sl.live.load(std::memory_order_acquire) != l) { sl.inUse.store(nullptr, std::memory_order_release); l = nullptr; }
+        if (l != nullptr && l->slices.empty()) l = nullptr;
+        loops[i] = l;
+        any |= l != nullptr;
+    }
+    const auto release = [this] { for (auto& sl : slots) sl.inUse.store(nullptr, std::memory_order_release); };
+    if (! any || frames == 0) { for (auto& sl : slots) sl.playingSlice.store(-1); release(); return; }
+    const auto* first = loops[melody] != nullptr ? loops[melody] : loops[drums];
 
     // Transport
     const bool sync = pSync->load(std::memory_order_relaxed) >= 0.5f;
@@ -172,7 +250,7 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         playing = true;
         stepStart = internalStep;   // already in grid steps
         internalStep += frames * stepsPerSample;
-        const double loopSteps = loop->bars * bounce::stepsPerBar;
+        const double loopSteps = first->bars * bounce::stepsPerBar * (loops[melody] && loops[drums] ? (double) loops[drums]->bars : 1.0);
         if (internalStep > loopSteps * 1024.0) internalStep = std::fmod(internalStep, loopSteps);
     }
     else if (! preview.load(std::memory_order_relaxed))
@@ -180,27 +258,35 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
     if (! playing)
     {
-        if (expectedStep > -1e8) player.reset();
+        if (expectedStep > -1e8) for (auto& sl : slots) sl.player.reset();
         expectedStep = -1e9;
-        playingSlice.store(-1);
-        inUse.store(nullptr, std::memory_order_release);
+        for (auto& sl : slots) sl.playingSlice.store(-1);
+        release();
         return;
     }
 
-    const auto g = readGroove();
-    if (loop != lastLoop || std::abs(bpm - lastBpm) > 1e-6 || ! sameSettings(g, lastSettings))
-    {
-        if (loop != lastLoop) player.reset();
-        player.update(*loop, g, bpm);
-        lastLoop = loop; lastBpm = bpm; lastSettings = g;
-    }
-    if (std::abs(stepStart - expectedStep) > 0.5) player.reset();    // jumped (host loop / locate)
+    const bool jumped = std::abs(stepStart - expectedStep) > 0.5;            // host loop / locate
     expectedStep = stepStart + frames * stepsPerSample;
-
-    const float gain = juce::Decibels::decibelsToGain(pOutput->load(std::memory_order_relaxed));
-    player.render(*loop, buffer.getWritePointer(0), buffer.getWritePointer(1), frames, stepStart, stepsPerSample, gain);
-    playingSlice.store(player.playingSlice(), std::memory_order_relaxed);
-    inUse.store(nullptr, std::memory_order_release);
+    const float outGain = juce::Decibels::decibelsToGain(pOutput->load(std::memory_order_relaxed));
+    for (int i = 0; i < numSlots; ++i)
+    {
+        auto& sl = slots[(size_t) i];
+        const auto* loop = loops[i];
+        if (loop == nullptr) { sl.playingSlice.store(-1, std::memory_order_relaxed); sl.lastLoop = nullptr; continue; }
+        const auto g = grooveFor(i);
+        if (loop != sl.lastLoop || std::abs(bpm - sl.lastBpm) > 1e-6 || ! sameSettings(g, sl.lastSettings))
+        {
+            if (loop != sl.lastLoop) sl.player.reset();
+            sl.player.update(*loop, g, bpm);
+            sl.lastLoop = loop; sl.lastBpm = bpm; sl.lastSettings = g;
+        }
+        if (jumped) sl.player.reset();
+        const float lv = (i == melody ? pMelLevel : pDrumLevel)->load(std::memory_order_relaxed);
+        const float gain = lv <= -59.9f ? 0.0f : outGain * juce::Decibels::decibelsToGain(lv);
+        sl.player.render(*loop, buffer.getWritePointer(0), buffer.getWritePointer(1), frames, stepStart, stepsPerSample, gain);
+        sl.playingSlice.store(sl.player.playingSlice(), std::memory_order_relaxed);
+    }
+    release();
 
     const auto elapsed = juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - t0);
     const float load = (float) (elapsed / (frames / rate) * 100.0);
@@ -208,8 +294,9 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 }
 
 //==============================================================================
-juce::String EpsilonBounceProcessor::loadFile(const juce::File& file)
+juce::String EpsilonBounceProcessor::loadFile(const juce::File& file, int slot)
 {
+    slot = juce::jlimit(0, numSlots - 1, slot);
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(file));
@@ -221,85 +308,135 @@ juce::String EpsilonBounceProcessor::loadFile(const juce::File& file)
     reader->read(&buf, 0, n, 0, true, buf.getNumChannels() > 1);
     std::vector<float> l(buf.getReadPointer(0), buf.getReadPointer(0) + n);
     std::vector<float> r(buf.getReadPointer(buf.getNumChannels() - 1), buf.getReadPointer(buf.getNumChannels() - 1) + n);
-    setRawAudio(std::move(l), std::move(r), reader->sampleRate, file.getFileNameWithoutExtension());
+    setRawAudio(slot, std::move(l), std::move(r), reader->sampleRate, file.getFileNameWithoutExtension());
     return {};
 }
 
-void EpsilonBounceProcessor::setRawAudio(std::vector<float> l, std::vector<float> r, double sr, const juce::String& name)
+void EpsilonBounceProcessor::setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name)
 {
     {
         const juce::ScopedLock sl(loopLock);
-        rawL = std::move(l); rawR = std::move(r); rawRate = sr; loopName = name;
+        auto& s = slots[(size_t) slot];
+        s.rawL = std::move(l); s.rawR = std::move(r); s.rawRate = sr; s.name = name;
     }
-    startAnalysis();
+    startAnalysis(slot);
 }
 
-void EpsilonBounceProcessor::startAnalysis()
+void EpsilonBounceProcessor::clearSlot(int slot)
 {
+    slot = juce::jlimit(0, numSlots - 1, slot);
+    {
+        const juce::ScopedLock sl(loopLock);
+        auto& s = slots[(size_t) slot];
+        s.rawL.clear(); s.rawR.clear(); s.name.clear();
+    }
+    publish(slot, nullptr);
+}
+
+void EpsilonBounceProcessor::startAnalysis(int slot)
+{
+    auto& s = slots[(size_t) slot];
     std::vector<float> l, r; double sr;
     {
         const juce::ScopedLock sl(loopLock);
-        if (rawL.empty()) return;
-        l = rawL; r = rawR; sr = rawRate;
+        if (s.rawL.empty()) return;
+        l = s.rawL; r = s.rawR; sr = s.rawRate;
     }
     bounce::AnalysisSettings a;
-    a.sensitivity = pSensitivity->load() * 0.01f;
-    a.barsHint = barsChoices[juce::jlimit(0, 4, juce::roundToInt(pBars->load()))];
-    a.material = material();
-    a.gridDiv = juce::roundToInt(pChop->load()) == 2 ? 4 : juce::roundToInt(pChop->load()) == 1 ? 2 : 1;
+    if (slot == drums)
+    {
+        a.sensitivity = 0.6f;       // catch ghost notes: they carry most of a groove's feel
+        a.barsHint = 0;
+        a.material = bounce::Material::drums;
+    }
+    else
+    {
+        a.sensitivity = pSensitivity->load() * 0.01f;
+        a.barsHint = barsChoices[juce::jlimit(0, 4, juce::roundToInt(pBars->load()))];
+        a.material = material();
+        a.gridDiv = juce::roundToInt(pChop->load()) == 2 ? 4 : juce::roundToInt(pChop->load()) == 1 ? 2 : 1;
+    }
     a.autoAlign = pAlign->load() >= 0.5f;
-    lastSliceKey = sliceKey();
-    analysing = true;
-    worker.addJob([this, l = std::move(l), r = std::move(r), sr, a]() mutable
+    s.lastSliceKey = sliceKey(slot);
+    s.analysing = true;
+    worker.addJob([this, slot, l = std::move(l), r = std::move(r), sr, a]() mutable
     {
         auto data = bounce::analyse(std::move(l), std::move(r), sr, a);
-        juce::MessageManager::callAsync([this, data] { publish(data); analysing = false; });
+        juce::MessageManager::callAsync([this, slot, data]
+        {
+            bool still;
+            { const juce::ScopedLock sl(loopLock); still = ! slots[(size_t) slot].rawL.empty(); }
+            if (still) publish(slot, data);          // (cleared while analysing: drop the result)
+            slots[(size_t) slot].analysing = false;
+        });
     });
 }
 
-void EpsilonBounceProcessor::publish(std::shared_ptr<const bounce::LoopData> loop)
+void EpsilonBounceProcessor::publish(int slot, std::shared_ptr<const bounce::LoopData> loop)
 {
-    const juce::ScopedLock sl(loopLock);
-    if (current) retired.push_back(current);
-    current = std::move(loop);
-    live.store(current.get(), std::memory_order_release);
-    ++loopSerial;
+    auto& s = slots[(size_t) slot];
+    // This loop's own pocket: what the other slot locks to when this one leads.
+    bounce::LearnResult res;
+    if (loop) res = bounce::learnGroove(*loop);
+    const bool valid = loop != nullptr && res.hits >= 4;
+    for (int i = 0; i < bounce::stepsPerBar; ++i)
+    {
+        s.pocket[(size_t) i].store(valid ? res.groove.offset[(size_t) i] : 0.0f, std::memory_order_relaxed);
+        s.pocket[(size_t) (i + bounce::stepsPerBar)].store(valid ? res.groove.accentDb[(size_t) i] : 0.0f, std::memory_order_relaxed);
+    }
+    s.pocketValid.store(valid, std::memory_order_relaxed);
+    {
+        const juce::ScopedLock sl(loopLock);
+        s.pocketInfo = LearnInfo { s.name, res.hits, res.stepsHeard, res.swingPercent, valid, res.heard };
+        if (s.current) s.retired.push_back(s.current);
+        s.current = std::move(loop);
+        s.live.store(s.current.get(), std::memory_order_release);
+    }
+    ++s.serial;
+    ++learnSerial;                                   // displays that show a pocket redraw
 }
 
-std::shared_ptr<const bounce::LoopData> EpsilonBounceProcessor::getLoop() const
+std::shared_ptr<const bounce::LoopData> EpsilonBounceProcessor::getLoop(int slot) const
 {
     const juce::ScopedLock sl(loopLock);
-    return current;
+    return slots[(size_t) juce::jlimit(0, numSlots - 1, slot)].current;
 }
 
 void EpsilonBounceProcessor::timerCallback()
 {
+    for (int i = 0; i < numSlots; ++i)
     {
-        const juce::ScopedLock sl(loopLock);
-        const auto* busy = inUse.load(std::memory_order_acquire);
-        retired.erase(std::remove_if(retired.begin(), retired.end(), [busy](const auto& p) { return p.get() != busy; }), retired.end());
-    }
-    // Slicing controls changed: re-analyse (debounced by the 10 Hz timer)
-    if (! analysing.load() && sliceKey() != lastSliceKey)
-    {
-        bool have;
-        { const juce::ScopedLock sl(loopLock); have = ! rawL.empty(); }
-        if (have) startAnalysis();
-        else lastSliceKey = sliceKey();
+        auto& s = slots[(size_t) i];
+        {
+            const juce::ScopedLock sl(loopLock);
+            const auto* busy = s.inUse.load(std::memory_order_acquire);
+            s.retired.erase(std::remove_if(s.retired.begin(), s.retired.end(), [busy](const auto& p) { return p.get() != busy; }), s.retired.end());
+        }
+        // Slicing controls changed: re-analyse (debounced by the 10 Hz timer)
+        if (! s.analysing.load() && sliceKey(i) != s.lastSliceKey)
+        {
+            bool have;
+            { const juce::ScopedLock sl(loopLock); have = ! s.rawL.empty(); }
+            if (have) startAnalysis(i);
+            else s.lastSliceKey = sliceKey(i);
+        }
     }
 }
 
 //==============================================================================
-juce::File EpsilonBounceProcessor::renderToFile(int loops)
+juce::File EpsilonBounceProcessor::renderToFile(int loops, int slot)
 {
-    auto loop = getLoop();
+    slot = juce::jlimit(0, numSlots - 1, slot);
+    auto loop = getLoop(slot);
     if (! loop || loop->slices.empty()) return {};
+    const auto groove = grooveFor(slot);
+    const auto loopName = getLoopName(slot);
     const double bpm = gridBpm();
     const double hostTempo = playbackBpm();
     const double outRate = rate > 0 ? rate : 44100.0;
     bounce::Player p;
     p.prepare(outRate, 512);
-    p.update(*loop, readGroove(), bpm);
+    p.update(*loop, groove, bpm);
     const double sps = bpm / 60.0 * 4.0 / outRate;
     const int total = (int) std::floor(loops * loop->bars * bounce::stepsPerBar / sps);   // whole loops at the grid speed
     juce::AudioBuffer<float> out(2, total);
@@ -308,7 +445,11 @@ juce::File EpsilonBounceProcessor::renderToFile(int loops)
     for (int pos = 0; pos < total; pos += 512)
         p.render(*loop, out.getWritePointer(0) + pos, out.getWritePointer(1) + pos, juce::jmin(512, total - pos), pos * sps, sps, gain);
 
-    const auto grooveName = juce::String(bounce::grooveName(readGroove().groove)).toLowerCase();
+    // Named for what was done to it: its groove, or the loop it was locked to, or 'original feel' when it leads.
+    const int leader = leaderOf(slot);
+    const auto grooveName = leads(slot) ? juce::String("original feel")
+                          : leader >= 0 ? "locked to " + getLoopName(leader)
+                          : juce::String(bounce::grooveName(groove.groove)).toLowerCase();
     // Kept in Music/Epsilon Sounds/Epsilon Bounce/, not temp: FL Studio links dragged-in audio by its
     // path, so a temp file would later go missing from the project. Same audio reuses its file;
     // different audio gets a new name, so a file a project already uses is never overwritten.
@@ -444,23 +585,25 @@ void EpsilonBounceProcessor::getStateInformation(juce::MemoryBlock& dest)
         }
     }
     const juce::ScopedLock sl(loopLock);
-    if (! rawL.empty())
+    for (int i = 0; i < numSlots; ++i)
     {
-        // the loop travels with the session, FLAC-compressed
+        const auto& s = slots[(size_t) i];
+        if (s.rawL.empty()) continue;
+        // the loops travel with the session, FLAC-compressed
         juce::MemoryBlock flacData;
         {
             auto* mos = new juce::MemoryOutputStream(flacData, false);
             juce::FlacAudioFormat flac;
-            std::unique_ptr<juce::AudioFormatWriter> w(flac.createWriterFor(mos, rawRate, 2, 24, {}, 0));
+            std::unique_ptr<juce::AudioFormatWriter> w(flac.createWriterFor(mos, s.rawRate, 2, 24, {}, 0));
             if (w != nullptr)
             {
-                const float* chans[] { rawL.data(), rawR.data() };
-                w->writeFromFloatArrays(chans, 2, (int) rawL.size());
+                const float* chans[] { s.rawL.data(), s.rawR.data() };
+                w->writeFromFloatArrays(chans, 2, (int) s.rawL.size());
             }
             else delete mos;
         }
-        juce::ValueTree audio("Loop");
-        audio.setProperty("name", loopName, nullptr);
+        juce::ValueTree audio(i == melody ? "Loop" : "Drums");
+        audio.setProperty("name", s.name, nullptr);
         audio.setProperty("flac", juce::var(flacData), nullptr);
         tree.appendChild(audio, nullptr);
     }
@@ -474,8 +617,8 @@ void EpsilonBounceProcessor::setStateInformation(const void* data, int size)
     if (xml == nullptr) return;
     auto tree = juce::ValueTree::fromXml(*xml);
     if (! tree.isValid()) return;
-    auto audio = tree.getChildWithName("Loop");
-    if (audio.isValid()) tree.removeChild(audio, nullptr);
+    juce::ValueTree audios[numSlots] { tree.getChildWithName("Loop"), tree.getChildWithName("Drums") };
+    for (auto& a : audios) if (a.isValid()) tree.removeChild(a, nullptr);
     auto lt = tree.getChildWithName("Learned");
     if (lt.isValid())
     {
@@ -498,18 +641,22 @@ void EpsilonBounceProcessor::setStateInformation(const void* data, int size)
         }
     }
     state.replaceState(tree);
-    if (! audio.isValid()) return;
-    if (auto* mb = audio.getProperty("flac").getBinaryData())
+    for (int i = 0; i < numSlots; ++i)
     {
-        juce::FlacAudioFormat flac;
-        std::unique_ptr<juce::AudioFormatReader> r(flac.createReaderFor(new juce::MemoryInputStream(*mb, true), true));
-        if (r != nullptr && r->lengthInSamples > 0)
+        const auto& audio = audios[i];
+        if (! audio.isValid()) continue;
+        if (auto* mb = audio.getProperty("flac").getBinaryData())
         {
-            const int n = (int) r->lengthInSamples;
-            juce::AudioBuffer<float> buf(2, n);
-            r->read(&buf, 0, n, 0, true, true);
-            setRawAudio({ buf.getReadPointer(0), buf.getReadPointer(0) + n }, { buf.getReadPointer(1), buf.getReadPointer(1) + n },
-                        r->sampleRate, audio.getProperty("name").toString());
+            juce::FlacAudioFormat flac;
+            std::unique_ptr<juce::AudioFormatReader> r(flac.createReaderFor(new juce::MemoryInputStream(*mb, true), true));
+            if (r != nullptr && r->lengthInSamples > 0)
+            {
+                const int n = (int) r->lengthInSamples;
+                juce::AudioBuffer<float> buf(2, n);
+                r->read(&buf, 0, n, 0, true, true);
+                setRawAudio(i, { buf.getReadPointer(0), buf.getReadPointer(0) + n }, { buf.getReadPointer(1), buf.getReadPointer(1) + n },
+                            r->sampleRate, audio.getProperty("name").toString());
+            }
         }
     }
 }

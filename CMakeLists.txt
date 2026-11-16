@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(EpsilonBounce VERSION 1.3.0 LANGUAGES C CXX)
+project(EpsilonBounce VERSION 1.4.0 LANGUAGES C CXX)
 
 # macOS: 12.0 target and JUCE 9.0.5 (bundled in ./JUCE in the Projucer package; CI clones it).
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
