@@ -15,22 +15,24 @@ bool GrooveGrid::isInterestedInFileDrag(const juce::StringArray& files)
 void GrooveGrid::filesDropped(const juce::StringArray& files, int, int)
 {
     dragOver = false;
-    const bool learn = juce::ModifierKeys::getCurrentModifiersRealtime().isAltDown();
-    if (! files.isEmpty() && onFileDropped) onFileDropped(juce::File(files[0]), learn);
+    const bool alt = juce::ModifierKeys::getCurrentModifiersRealtime().isAltDown();
+    if (! files.isEmpty() && onFileDropped) onFileDropped(juce::File(files[0]), alt);
     repaint();
 }
 
 void GrooveGrid::refresh(bool force)
 {
-    const auto serial = proc.getLoopSerial();
-    const auto g = proc.currentGroove();
+    const auto serial = proc.getLoopSerial(slot);
+    const auto g = proc.grooveFor(slot);
     const auto bpm = proc.gridBpm();
-    const auto playing = proc.getPlayingSlice();
+    const auto playing = proc.getPlayingSlice(slot);
     const auto learnSerial = proc.getLearnSerial();
-    const bool changed = learnSerial != lastLearn || serial != lastSerial || g.groove != lastG.groove || g.amount != lastG.amount || g.swing != lastG.swing
+    const int leader = proc.leaderOf(slot);
+    const bool lead = proc.leads(slot);
+    const bool changed = leader != lastLeader || lead != lastLeads || g.shiftSteps != lastG.shiftSteps || ! (g.learned == lastG.learned) || learnSerial != lastLearn || serial != lastSerial || g.groove != lastG.groove || g.amount != lastG.amount || g.swing != lastG.swing
                       || g.tighten != lastG.tighten || g.humanizeMs != lastG.humanizeMs || g.accent != lastG.accent
                       || g.feelMs != lastG.feelMs || std::abs(bpm - lastBpm) > 0.01;
-    if (serial != lastSerial) { loop = proc.getLoop(); cache = {}; }
+    if (serial != lastSerial) { loop = proc.getLoop(slot); cache = {}; }
     if (changed || force)
     {
         places.clear();
@@ -41,7 +43,7 @@ void GrooveGrid::refresh(bool force)
             for (int i = 0; i < (int) loop->slices.size(); ++i)
                 places.push_back(bounce::place(loop->slices[(size_t) i], i, g, t, msPerStep));
         }
-        lastSerial = serial; lastG = g; lastBpm = bpm; lastLearn = learnSerial;
+        lastSerial = serial; lastG = g; lastBpm = bpm; lastLearn = learnSerial; lastLeader = leader; lastLeads = lead;
         repaint();
     }
     else if (playing != lastPlaying)
@@ -53,10 +55,11 @@ void GrooveGrid::renderCache()
 {
     const auto pal = palette(Tier::Epsilon);
     const auto scale = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay() ? (float) juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->scale : 1.0f;
-    cache = juce::Image(juce::Image::ARGB, juce::jmax(1, juce::roundToInt(getWidth() * scale)), juce::jmax(1, juce::roundToInt(getHeight() * scale)), true, juce::SoftwareImageType());
+    cache = juce::Image(juce::Image::RGB, juce::jmax(1, juce::roundToInt(getWidth() * scale)), juce::jmax(1, juce::roundToInt(getHeight() * scale)), true, juce::SoftwareImageType());
     juce::Graphics g(cache);
     g.addTransform(juce::AffineTransform::scale(scale));
     const auto r = getLocalBounds().toFloat();
+    g.fillAll(pal.surface);           // the panel colour behind the well's rounded corners: the grid is opaque
     controls::drawWell(g, r, pal);
     if (! loop || loop->slices.empty()) return;
 
@@ -71,16 +74,20 @@ void GrooveGrid::renderCache()
     const auto mid = r.getCentreY() + 10.0f, amp = r.getHeight() * 0.32f;
     juce::Path wave;
     const int n = (int) loop->overview.size();
+    // the file may run past the last bar (a reverb tail): the grid spans the loop, the tail is not drawn
+    const float span = (float) (loop->length / (loop->samplesPerStep() * steps));
+    const int shown = juce::jlimit(2, n, (int) std::ceil(n / juce::jmax(1.0f, span)));
+    const auto xw = [&](int i) { return r.getX() + r.getWidth() * span * (float) i / (float) (n - 1); };
     wave.startNewSubPath(r.getX(), mid);
-    for (int i = 0; i < n; ++i) wave.lineTo(r.getX() + r.getWidth() * (float) i / (float) (n - 1), mid - amp * loop->overview[(size_t) i]);
-    for (int i = n - 1; i >= 0; --i) wave.lineTo(r.getX() + r.getWidth() * (float) i / (float) (n - 1), mid + amp * loop->overview[(size_t) i]);
+    for (int i = 0; i < shown; ++i) wave.lineTo(xw(i), mid - amp * loop->overview[(size_t) i]);
+    for (int i = shown - 1; i >= 0; --i) wave.lineTo(xw(i), mid + amp * loop->overview[(size_t) i]);
     wave.closeSubPath();
     g.setColour(pal.raised.brighter(0.25f));
     g.fillPath(wave);
-    // bar numbers
+    // bar numbers (bar 1 carries the lane's name instead)
     g.setFont(caption());
     g.setColour(pal.inkMuted);
-    for (int b = 0; b < loop->bars; ++b)
+    for (int b = 1; b < loop->bars; ++b)
         g.drawText(juce::String(b + 1), juce::Rectangle<float>(r.getX() + r.getWidth() * (float) (b * 16) / (float) steps + 5.0f, r.getY() + 3.0f, 30.0f, 14.0f),
                    juce::Justification::centredLeft, false);
 }
@@ -91,6 +98,7 @@ void GrooveGrid::paint(juce::Graphics& g)
     const auto r = getLocalBounds().toFloat();
     if (! loop || loop->slices.empty())
     {
+        g.fillAll(pal.surface);
         controls::drawWell(g, r, pal);
         g.setColour(dragOver ? pal.live : pal.line);
         const float dashes[] { 6.0f, 5.0f };
@@ -99,10 +107,14 @@ void GrooveGrid::paint(juce::Graphics& g)
         g.fillPath(dashed);
         g.setFont(body());
         g.setColour(pal.ink);
-        g.drawText(proc.isAnalysing() ? "Finding the hits..." : "Drop a loop here", r.withTrimmedBottom(20.0f), juce::Justification::centred, false);
+        const bool isDrums = slot == EpsilonBounceProcessor::drums;
+        g.drawText(proc.isAnalysing(slot) ? "Finding the hits..." : isDrums ? "Drop your DRUMS or percussion here" : "Drop your MELODY or sample here",
+                   r.withTrimmedBottom(20.0f), juce::Justification::centred, false);
         g.setFont(caption());
         g.setColour(pal.inkMuted);
-        g.drawText("WAV, AIFF or FLAC  \xc2\xb7  up to 60 s  \xc2\xb7  drums, percs, melodies", r.withTrimmedTop(30.0f), juce::Justification::centred, false);
+        g.drawText(juce::String::fromUTF8(isDrums ? "the melody locks into their pocket  \xc2\xb7  WAV, AIFF or FLAC  \xc2\xb7  up to 60 s"
+                                                  : "loops, chops, flipped samples  \xc2\xb7  WAV, AIFF or FLAC  \xc2\xb7  up to 60 s"),
+                   r.withTrimmedTop(30.0f), juce::Justification::centred, false);
         return;
     }
     if (cache.isNull() || cache.getWidth() < getWidth()) renderCache();
@@ -110,13 +122,13 @@ void GrooveGrid::paint(juce::Graphics& g)
 
     const int steps = loop->bars * bounce::stepsPerBar;
     const auto xOf = [&](double step) { return r.getX() + r.getWidth() * (float) (std::fmod(step + steps, (double) steps) / steps); };
-    const auto playing = proc.getPlayingSlice();
+    const auto playing = proc.getPlayingSlice(slot);
     for (size_t i = 0; i < loop->slices.size() && i < places.size(); ++i)
     {
         const auto& s = loop->slices[i];
         const float x0 = xOf(s.gridStep), x1 = xOf(places[i].step);
         const float h = juce::jlimit(0.25f, 1.0f, s.peak * 1.6f);
-        const float top = r.getY() + 18.0f + (1.0f - h) * (r.getHeight() - 36.0f) * 0.5f;
+        const float top = r.getY() + 32.0f + (1.0f - h) * (r.getHeight() - 50.0f) * 0.5f;   // clear of the lane's name row
         // where it was
         g.setColour(pal.inkMuted);
         g.drawRect(juce::Rectangle<float>(x0 - 1.5f, r.getBottom() - 14.0f, 3.0f, 10.0f), 1.0f);
@@ -131,10 +143,30 @@ void GrooveGrid::paint(juce::Graphics& g)
         g.setColour(hot ? pal.focus : pal.live.withAlpha(0.35f + 0.65f * juce::jlimit(0.0f, 1.0f, places[i].gain * h)));
         g.fillRoundedRectangle(juce::Rectangle<float>(x1 - (hot ? 2.0f : 1.5f), top, hot ? 4.0f : 3.0f, r.getBottom() - 16.0f - top), 1.5f);
     }
-    // Match Drums: where your drums hit (learned), as markers along the top - the melody locks under them
-    const auto info = proc.getLearnInfo();
-    const auto gs = proc.currentGroove();
-    if (info.valid && gs.groove == bounce::Groove::learned)
+    // Lane name, and what is happening to this loop: it leads, it is locked to the other, or it rides a groove.
+    const bool isDrums = slot == EpsilonBounceProcessor::drums;
+    const auto gs = proc.grooveFor(slot);
+    const int leader = proc.leaderOf(slot);
+    const bool lead = proc.leads(slot);
+    const auto dotSep = juce::String(juce::CharPointer_UTF8("  \xc2\xb7  "));
+    g.setFont(font(Weight::Bold, 10.5f).withExtraKerningFactor(0.16f));
+    g.setColour(pal.trim);
+    g.drawText(isDrums ? "DRUMS" : "MELODY", juce::Rectangle<float>(r.getX() + 8.0f, r.getY() + 12.0f, 70.0f, 16.0f), juce::Justification::centredLeft, false);
+    g.setFont(caption());
+    g.setColour(pal.ink);
+    g.drawText(proc.isAnalysing(slot) ? juce::String("Finding the hits...") : proc.getLoopName(slot),
+               juce::Rectangle<float>(r.getX() + (isDrums ? 62.0f : 70.0f), r.getY() + 12.0f, r.getWidth() * 0.34f, 16.0f), juce::Justification::centredLeft, true);
+
+    // The pocket this lane is locked to, as markers along the top - its notes land under them.
+    const auto info = leader >= 0 ? proc.getPocketInfo(leader) : proc.getLearnInfo();
+    const bool showMarkers = leader >= 0 || (! lead && info.valid && gs.groove == bounce::Groove::learned);
+    juce::String status;
+    if (lead)
+    {
+        const auto own = proc.getPocketInfo(slot);
+        status = "LEADS" + dotSep + "ORIGINAL FEEL" + (own.valid ? dotSep + juce::String(juce::roundToInt(own.swingPercent)) + " % swing" : juce::String());
+    }
+    else if (showMarkers)
     {
         g.setColour(pal.trim);
         for (int b = 0; b < loop->bars; ++b)
@@ -146,10 +178,13 @@ void GrooveGrid::paint(juce::Graphics& g)
                     tri.addTriangle(xs - 4.0f, r.getY() + 3.0f, xs + 4.0f, r.getY() + 3.0f, xs, r.getY() + 10.0f);
                     g.fillPath(tri);
                 }
-        g.setFont(caption());
-        g.drawText("LOCKED TO DRUMS: " + info.name + juce::String(juce::CharPointer_UTF8("  \xc2\xb7  ")) + juce::String(juce::roundToInt(info.swingPercent)) + " % swing",
-                   r.reduced(8.0f, 0.0f).withY(r.getY() + 12.0f).withHeight(16.0f).withTrimmedLeft(r.getWidth() * 0.3f), juce::Justification::centredRight, true);
+        status = (leader == EpsilonBounceProcessor::melody ? "LOCKED TO MELODY: " : "LOCKED TO DRUMS: ") + info.name + dotSep + juce::String(juce::roundToInt(info.swingPercent)) + " % swing";
     }
+    else
+        status = "GROOVE: " + juce::String(bounce::grooveName(gs.groove)).toUpperCase();
+    g.setFont(caption());
+    g.setColour(lead ? pal.live : pal.trim);
+    g.drawText(status, r.reduced(8.0f, 0.0f).withY(r.getY() + 12.0f).withHeight(16.0f).withTrimmedLeft(r.getWidth() * 0.45f), juce::Justification::centredRight, true);
     if (std::abs(loop->alignSteps) > 1e-6)
     {
         const double ms = loop->alignSteps * 60000.0 / loop->bpm / 4.0;
@@ -172,7 +207,8 @@ namespace
 struct DragOutButton : juce::TextButton
 {
     using TextButton::TextButton;
-    std::function<void()> onDragStart;
+    std::function<void()> onDragStart, onHover;
+    void mouseEnter(const juce::MouseEvent& e) override { if (onHover) onHover(); TextButton::mouseEnter(e); }
     void mouseDrag(const juce::MouseEvent& e) override
     {
         if (e.getDistanceFromDragStart() > 6 && ! started && onDragStart) { started = true; onDragStart(); }
@@ -199,15 +235,28 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
         return "Stopped" + mode;
     };
     footer.cpuPercent = [this] { return proc.getCpuPercent(); };
+    footer.messageText = [this] { return message; };
+    footer.messageIsProblem = [this] { return ! messageIsNote; };
 
-    for (auto* b : { &loadButton, &previewButton, &syncButton, &learnButton, &prevPreset, &nextPreset }) addAndMakeVisible(b);
+    for (juce::TextButton* b : { &loadButton, &previewButton, &syncButton, static_cast<juce::TextButton*>(&learnButton), &prevPreset, &nextPreset }) addAndMakeVisible(b);
     previewButton.setClickingTogglesState(true);
     previewButton.getProperties().set("pill", true);
     syncButton.getProperties().set("pill", true);
     previewButton.onClick = [this] { proc.setPreview(previewButton.getToggleState()); };
-    loadButton.onClick = [this] { chooseFile(false); };
-    learnButton.onClick = [this] { chooseFile(true); };
-    learnButton.setTooltip("Drop in your drum loop: Bounce learns its exact pocket and lines your melody or sample up with it. Tip: Alt-drop a file on the grid.");
+    loadButton.onClick = [this] { chooseFile(EpsilonBounceProcessor::melody); };
+    loadButton.setTooltip("Load your melody, sample or loop into the MELODY lane (or drop a file on the lane).");
+    learnButton.onClick = [this] { chooseFile(EpsilonBounceProcessor::drums); };
+    learnButton.setTooltip("Load your drums or percussion into the DRUMS lane: click, or drop the file on this button or on the lane. With Pocket on DRUMS LEAD the melody locks into their pocket.");
+    for (auto* b : { &clearMel, &clearDrum }) addAndMakeVisible(b);
+    clearMel.setTooltip("Empty the MELODY lane.");
+    clearDrum.setTooltip("Empty the DRUMS lane.");
+    clearMel.onClick = [this] { proc.clearSlot(EpsilonBounceProcessor::melody); };
+    clearDrum.onClick = [this] { proc.clearSlot(EpsilonBounceProcessor::drums); };
+    linkSwitch.setTooltip("Who sets the pocket when both lanes are loaded. DRUMS LEAD: drums keep their feel, the melody locks to them. MELODY LEADS: the other way round. GROOVE: both ride the groove you pick below.");
+    addAndMakeVisible(linkSwitch);
+    melLevel.setTooltip("Volume of the MELODY lane in the plugin's output (fully down = off). Drag-outs are not affected.");
+    drumLevel.setTooltip("Volume of the DRUMS lane in the plugin's output (fully down = off, if your drums already play in the DAW). Drag-outs are not affected.");
+    addAndMakeVisible(melLevel); addAndMakeVisible(drumLevel);
     for (auto* b : { &holdButton, &alignButton }) { b->getProperties().set("pill", true); addAndMakeVisible(b); }
     holdButton.setTooltip("Hold keeps a note sounding until the next one starts, so moved notes leave no gaps. AUTO: on for Melodic and Grid, off for Drums.");
     holdButton.onClick = [this]
@@ -239,22 +288,36 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
     prevPreset.onClick = [step] { step(-1); };
     nextPreset.onClick = [step] { step(1); };
 
-    auto drag = std::make_unique<DragOutButton>("Drag out");
-    drag->setTooltip("Drag the bounced loop (2 loops long) into your DAW");
-    auto* dragRaw = drag.get();
-    dragRaw->onDragStart = [this]
+    const auto makeDrag = [this](int slot)
     {
-        const auto f = proc.renderToFile(2);
-        if (f.existsAsFile()) performExternalDragDropOfFiles({ f.getFullPathName() }, false);
+        auto drag = std::make_unique<DragOutButton>("Drag out");
+        drag->setTooltip(slot == EpsilonBounceProcessor::drums ? "Drag the DRUMS lane as you hear it (2 loops long) into your DAW"
+                                                                : "Drag the re-grooved MELODY (2 loops long) into your DAW");
+        drag->onDragStart = [this, slot] { dragOut(slot); };
+        drag->onHover = [this, slot] { proc.prepareDragOut(2, slot); };   // render ahead: the drag starts instantly
+        drag->onClick = [this] { message = "Hold and drag this into a track"; messageIsNote = true; footer.repaint(); };
+        addAndMakeVisible(*drag);
+        return drag;
     };
-    dragRaw->onClick = [this] { message = "Hold and drag this into a track"; repaint(); };
-    addAndMakeVisible(dragRaw);
-    dragRaw->setComponentID("drag");
-    dragOwned.reset(drag.release());
+    dragMel = makeDrag(EpsilonBounceProcessor::melody);
+    dragDrum = makeDrag(EpsilonBounceProcessor::drums);
+    dragMel->setComponentID("drag");
 
-    grid.onFileDropped = [this](const juce::File& f, bool learn) { load(f, learn); };
+    grid.onFileDropped = [this](const juce::File& f, bool alt) { load(f, alt ? EpsilonBounceProcessor::drums : EpsilonBounceProcessor::melody); };
+    drumGrid.onFileDropped = [this](const juce::File& f, bool) { load(f, EpsilonBounceProcessor::drums); };
+    grid.onDragOut = [this] { dragOut(EpsilonBounceProcessor::melody); };
+    drumGrid.onDragOut = [this] { dragOut(EpsilonBounceProcessor::drums); };
+    grid.onHover = [this] { proc.prepareDragOut(2, EpsilonBounceProcessor::melody); };
+    drumGrid.onHover = [this] { proc.prepareDragOut(2, EpsilonBounceProcessor::drums); };
+    grid.setTooltip("MELODY lane. Drop a loop to load it; drag the lane into your DAW to take the re-grooved loop out. Hollow ticks = where notes were, bars = where they land.");
+    drumGrid.setTooltip("DRUMS lane. Drop your drums or percussion; drag the lane into your DAW to take it out.");
+    grid.setOpaque(true);   // playback frames repaint the grids only, never the panel behind them
+    drumGrid.setOpaque(true);
     addAndMakeVisible(grid);
+    addAndMakeVisible(drumGrid);
+    learnButton.onFileDropped = [this](const juce::File& f) { load(f, EpsilonBounceProcessor::drums); };
     grooveSwitch.setRows(3);
+    grooveSwitch.setTooltip("The pocket both lanes ride when Pocket is on GROOVE, or when only one lane is loaded. Dimmed while one lane leads the other.");
     addAndMakeVisible(grooveSwitch);
     addAndMakeVisible(timeSwitch);
     for (auto* k : { &amount, &swing, &tighten, &humanize, &accent, &feel, &output, &sensitivity, &tempo }) addAndMakeVisible(k);
@@ -267,9 +330,9 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
     syncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.state, "sync", syncButton);
 
     setResizable(true, true);
-    setResizeLimits(1080 * 3 / 4, 680 * 3 / 4, 1080 * 2, 680 * 2);
-    getConstrainer()->setFixedAspectRatio(1080.0 / 680.0);
-    setSize(1080, 680);
+    setResizeLimits(1160 * 3 / 4, 780 * 3 / 4, 1160 * 2, 780 * 2);
+    getConstrainer()->setFixedAspectRatio(1160.0 / 780.0);
+    setSize(1160, 780);
     startTimerHz(30);
 }
 
@@ -291,30 +354,48 @@ void EpsilonBounceEditor::buildPresetMenu()
     }
 }
 
-void EpsilonBounceEditor::chooseFile(bool learn)
+void EpsilonBounceEditor::chooseFile(int slot)
 {
-    chooser = std::make_unique<juce::FileChooser>(learn ? "Learn the groove of a reference loop" : "Load a loop", juce::File(),
+    chooser = std::make_unique<juce::FileChooser>(slot == EpsilonBounceProcessor::drums ? "Load your drums or percussion" : "Load your melody, sample or loop", juce::File(),
                                                   "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                         [this, learn](const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) load(fc.getResult(), learn); });
+                         [this, slot](const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) load(fc.getResult(), slot); });
 }
 
-void EpsilonBounceEditor::load(const juce::File& f, bool learn)
+void EpsilonBounceEditor::load(const juce::File& f, int slot)
 {
-    message = learn ? proc.learnFromFile(f) : proc.loadFile(f);
-    repaint();
+    message = proc.loadFile(f, slot);
+    messageIsNote = message.isEmpty();
+    if (message.isEmpty()) message = slot == EpsilonBounceProcessor::drums ? juce::String("Listening to your drums...") : juce::String("Finding the hits...");
+    footer.repaint();
+}
+
+void EpsilonBounceEditor::dragOut(int slot)
+{
+    const auto f = proc.renderToFile(2, slot);
+    if (f.existsAsFile()) performExternalDragDropOfFiles({ f.getFullPathName() }, false);
 }
 
 void EpsilonBounceEditor::timerCallback()
 {
     grid.refresh(false);
-    const auto name = proc.getLoopName();
-    const auto title = proc.isAnalysing() ? juce::String("Finding the hits...") : name;
-    if (title != loopTitle) { loopTitle = title; repaint(heroPanel.withHeight(40)); }
+    drumGrid.refresh(false);
+    {
+        const bool haveMel = proc.getLoop(EpsilonBounceProcessor::melody) != nullptr, haveDrum = proc.getLoop(EpsilonBounceProcessor::drums) != nullptr;
+        for (auto* c : std::initializer_list<juce::Component*> { dragMel.get(), &clearMel }) if (c->isEnabled() != haveMel) c->setEnabled(haveMel);
+        for (auto* c : std::initializer_list<juce::Component*> { dragDrum.get(), &clearDrum }) if (c->isEnabled() != haveDrum) c->setEnabled(haveDrum);
+        const bool both = haveMel && haveDrum;
+        if (linkSwitch.getAlpha() != (both ? 1.0f : 0.5f)) linkSwitch.setAlpha(both ? 1.0f : 0.5f);
+        // while one lane leads, the groove picker is not what places the notes: dim it
+        const float ga = both && proc.link() != EpsilonBounceProcessor::Link::groove ? 0.4f : 1.0f;
+        if (grooveSwitch.getAlpha() != ga) grooveSwitch.setAlpha(ga);
+        // ...and the lock replaces these (Tighten 100 %, the leader's feel at 100 %, nothing added). Accent still works.
+        for (auto* k : { &amount, &swing, &tighten, &humanize, &feel }) if (k->getAlpha() != ga) k->setAlpha(ga);
+    }
     tempo.setEnabled(! syncButton.getToggleState() || ! proc.hostIsPlaying());
     const int cur = proc.getCurrentPreset();
     if (presetBox.getSelectedId() != cur + 1) presetBox.setSelectedId(cur + 1, juce::dontSendNotification);
-    learnButton.setButtonText(proc.isLearning() ? "Listening..." : "Match drums");
+    learnButton.setButtonText(proc.isAnalysing(EpsilonBounceProcessor::drums) ? "Listening..." : "Load drums");
     {
         const int h = juce::roundToInt(proc.state.getParameter("hold")->convertFrom0to1(proc.state.getParameter("hold")->getValue()));
         const juce::String txt = h == 1 ? "Hold: on" : h == 2 ? "Hold: off" : juce::String("Hold: auto");
@@ -323,14 +404,16 @@ void EpsilonBounceEditor::timerCallback()
         const bool isGrid = proc.material() == bounce::Material::grid;
         if (chopSwitch.isEnabled() != isGrid) { chopSwitch.setEnabled(isGrid); chopSwitch.setAlpha(isGrid ? 1.0f : 0.4f); }
     }
+    if (proc.getNoteSerial() != shownNoteSerial)
+    {
+        shownNoteSerial = proc.getNoteSerial();
+        message = proc.getLoadNote(); messageIsNote = true;
+        footer.repaint();
+    }
     if (proc.getLearnSerial() != shownLearnSerial)
     {
         shownLearnSerial = proc.getLearnSerial();
-        const auto info = proc.getLearnInfo();
-        if (! info.valid && info.name.isNotEmpty()) message = "Not enough hits in \"" + info.name + "\" to learn a groove";
-        else if (info.valid) message.clear();
         repaint(learnInfoArea);
-        repaint(heroPanel.withHeight(40));
     }
 }
 
@@ -338,15 +421,8 @@ void EpsilonBounceEditor::paint(juce::Graphics& g)
 {
     const auto& pal = look.colours();
     g.fillAll(pal.bg);
-    drawPanel(g, heroPanel.toFloat(), pal, "Groove");
-    if (message.isNotEmpty()) { g.setColour(pal.surface); g.fillRect(grid.getBounds().withHeight(20).translated(0, -22)); }
+    drawPanel(g, heroPanel.toFloat(), pal, "Pocket");
     drawPanel(g, feelPanel.toFloat(), pal, "Feel");
-    if (loopTitle.isNotEmpty())
-    {
-        g.setFont(body());
-        g.setColour(pal.ink);
-        g.drawText(loopTitle, heroPanel.withHeight(42).withTrimmedLeft(96).withTrimmedRight(400), juce::Justification::centredLeft, true);
-    }
     // section labels: the Hallmark's floating bar + spaced caps
     drawSectionLabel(g, { (float) slicePanel.getX(), (float) slicePanel.getY() + 7.0f }, "Slicing", pal);
     drawSectionLabel(g, { (float) barsLabel.getX(), (float) barsLabel.getCentreY() }, "Bars", pal);
@@ -371,11 +447,6 @@ void EpsilonBounceEditor::paint(juce::Graphics& g)
         g.setColour(pal.inkMuted);
         g.drawFittedText("Drop your drum loop here\nto lock this loop to it", learnInfoArea, juce::Justification::topLeft, 2);
     }
-    if (message.isNotEmpty())
-    {
-        g.setColour(pal.meterHot);
-        g.drawText(message, grid.getBounds().withHeight(20).reduced(8, 0).translated(0, -22), juce::Justification::centredRight, true);
-    }
 }
 
 void EpsilonBounceEditor::resized()
@@ -385,10 +456,10 @@ void EpsilonBounceEditor::resized()
     footer.setBounds(r.removeFromBottom(size::footer));
 
     auto hc = header.getControlArea();
-    loadButton.setBounds(hc.removeFromLeft(92));
+    loadButton.setBounds(hc.removeFromLeft(108));
+    hc.removeFromLeft(size::space2);
+    learnButton.setBounds(hc.removeFromLeft(100));
     hc.removeFromLeft(size::space3);
-    if (auto* d = findChildWithID("drag")) d->setBounds(hc.removeFromRight(88));
-    hc.removeFromRight(size::space2);
     previewButton.setBounds(hc.removeFromRight(82));
     hc.removeFromRight(size::space3);
     prevPreset.setBounds(hc.removeFromLeft(30));
@@ -404,13 +475,28 @@ void EpsilonBounceEditor::resized()
 
     auto h = heroPanel.reduced(size::space4);
     auto titleRow = h.removeFromTop(30);
-    materialSwitch.setBounds(titleRow.removeFromRight(300).withTrimmedTop(2));
+    materialSwitch.setBounds(titleRow.removeFromRight(250).withTrimmedTop(2));
     cutLabel = titleRow.removeFromRight(70).withTrimmedRight(size::space2);
+    titleRow.removeFromLeft(80);                                   // panel title
+    linkSwitch.setBounds(titleRow.removeFromLeft(juce::jmin(330, titleRow.getWidth() - 8)).withTrimmedTop(2));
     h.removeFromTop(4);
     auto sliceRow = h.removeFromBottom(112);
     grooveSwitch.setBounds(h.removeFromBottom(108));
     h.removeFromBottom(size::space3);
-    grid.setBounds(h);
+    // two lanes, each with its own Drag out / Level / Clear column
+    const int laneH = (h.getHeight() - size::space2) / 2;
+    const auto lane = [](juce::Rectangle<int> area, GrooveGrid& gg, juce::TextButton* drag, epsilon_ui::Knob& level, juce::TextButton& clear)
+    {
+        auto col = area.removeFromRight(84);
+        area.removeFromRight(size::space2);
+        gg.setBounds(area);
+        drag->setBounds(col.removeFromTop(26));
+        clear.setBounds(col.removeFromBottom(24));
+        level.setBounds(col.reduced(4, 2));
+    };
+    lane(h.removeFromTop(laneH), grid, dragMel.get(), melLevel, clearMel);
+    h.removeFromTop(size::space2);
+    lane(h, drumGrid, dragDrum.get(), drumLevel, clearDrum);
 
     slicePanel = sliceRow;
     auto sr = sliceRow.withTrimmedTop(16);
@@ -426,8 +512,7 @@ void EpsilonBounceEditor::resized()
     chopSwitch.setBounds(col2.withTrimmedTop(22).withHeight(28));
     holdButton.setBounds(col2.withTrimmedTop(22 + 28 + size::space2).withHeight(26));
     sr.removeFromLeft(size::space2);
-    learnButton.setBounds(sr.withTrimmedTop(22).withHeight(28));
-    alignButton.setBounds(sr.withTrimmedTop(22 + 28 + size::space2).withHeight(26));
+    alignButton.setBounds(sr.withTrimmedTop(22).withHeight(26).withWidth(juce::jmin(sr.getWidth(), 130)));
     learnInfoArea = {};   // what was learned is shown on the grid itself
 
     auto f = feelPanel.reduced(size::space4);

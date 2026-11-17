@@ -9,6 +9,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <ctime>
 
 namespace
 {
@@ -61,6 +62,180 @@ bool waitForLoop(EpsilonBounceProcessor& p, int serialBefore)
     return false;
 }
 
+// A long, dense melodic loop: chords changing every 8th with plucked attacks, 8 bars at 90 BPM (~21 s),
+// or 60 s for the worst case. The kind of sample that used to make Bounce lag.
+juce::File writeLongMelody(double sr, double seconds, const char* name)
+{
+    const int len = (int) (seconds * sr);
+    juce::AudioBuffer<float> b(2, len); b.clear();
+    const double eighth = 60.0 / 90.0 / 2.0 * sr;
+    const int roots[] { 57, 53, 48, 55, 52, 50 };
+    for (int k = 0; k * eighth < len; ++k)
+    {
+        const int a = (int) (k * eighth), e = juce::jmin(len, (int) ((k + 1) * eighth));
+        const int root = roots[(k / 2) % 6] + ((k & 1) ? 12 : 0);
+        for (int i = a; i < e; ++i)
+        {
+            const double t = (i - a) / sr;
+            const float env = (float) std::exp(-t * 6.0) * 0.25f;
+            float v = 0.0f;
+            for (int m : { root, root + 4, root + 7 }) v += (float) std::sin(2.0 * juce::MathConstants<double>::pi * 440.0 * std::pow(2.0, (m - 69) / 12.0) * t);
+            b.setSample(0, i, env * v); b.setSample(1, i, env * v * 0.9f);
+        }
+    }
+    auto f = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile(name);
+    f.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(f.createOutputStream().release(), sr, 2, 24, {}, 0));
+    w->writeFromAudioSampleBuffer(b, 0, len);
+    return f;
+}
+
+double msSince(double t0) { return juce::Time::getMillisecondCounterHiRes() - t0; }
+
+// CPU time of this thread: what the audio callback really costs, without the OS preempting the bench
+// (wall-clock spikes on a shared CI machine are the scheduler, not Bounce).
+double threadCpuMs()
+{
+#if JUCE_MAC || JUCE_LINUX
+    timespec ts {};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6;
+#else
+    return juce::Time::getMillisecondCounterHiRes();
+#endif
+}
+
+// ---- Lag profile: everything that can make Bounce (or the DAW around it) stutter, timed.
+void lagProfile()
+{
+    std::printf("\n== lag profile (48 kHz, 128-sample blocks = 2.67 ms budget)\n");
+    const double sr = 48000.0;
+    const int block = 128;
+    EpsilonBounceProcessor p;
+    Head head;
+    p.setPlayHead(&head);
+    p.setPlayConfigDetails(0, 2, sr, block);
+    p.prepareToPlay(sr, block);
+    auto setChoice = [&p](const char* id, float v) { auto* q = p.state.getParameter(id); q->setValueNotifyingHost(q->convertTo0to1(v)); };
+
+    // 1. load + analyse a 60 s melodic sample
+    setChoice("material", 1.0f);
+    auto big = writeLongMelody(sr, 59.0, "bounce-bench-long-melody.wav");
+    int ser = p.getLoopSerial();
+    double t0 = juce::Time::getMillisecondCounterHiRes();
+    p.loadFile(big);
+    const double loadCall = msSince(t0);
+    waitForLoop(p, ser);
+    const double analyse = msSince(t0);
+    std::printf("   load call (message thread): %.1f ms, analysis of 59 s melodic: %.0f ms, %d slices\n", loadCall, analyse, p.getLoop() ? (int) p.getLoop()->slices.size() : 0);
+    // 250 ms: GitHub's shared macOS runners read and decode the 30 MB test file about 4x slower than a
+    // real machine (167 ms there, 37 ms on the Linux bench). The load path itself is unchanged since 1.4.
+    check(loadCall < 250.0, "lag: loading a 59 s file blocks the UI for " + juce::String(loadCall, 1) + " ms (< 250)");
+    check(analyse < 4000.0, "lag: 59 s melodic sample analysed in " + juce::String(analyse, 0) + " ms (< 4 s, off the UI thread; was 3.5 s here)");
+
+    // 2. the host asking for the session (FL Studio does this a lot: undo history, autosave)
+    juce::MemoryBlock st;
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(400);   // a DAW's next save is never instant
+    double worstState = 0.0;
+    for (int i = 0; i < 6; ++i)
+    {
+        t0 = juce::Time::getMillisecondCounterHiRes();
+        p.getStateInformation(st);
+        worstState = juce::jmax(worstState, msSince(t0));
+    }
+    std::printf("   getStateInformation with a 59 s loop: worst %.1f ms (%d KB)\n", worstState, (int) (st.getSize() / 1024));
+    check(worstState < 20.0, "lag: the host saving the session takes " + juce::String(worstState, 1) + " ms (< 20, was 265 ms: a full FLAC encode every time)");
+    {
+        EpsilonBounceProcessor q;
+        q.setPlayConfigDetails(0, 2, sr, block);
+        q.prepareToPlay(sr, block);
+        const int qs = q.getLoopSerial();
+        t0 = juce::Time::getMillisecondCounterHiRes();
+        q.setStateInformation(st.getData(), (int) st.getSize());
+        const double restore = msSince(t0);
+        check(waitForLoop(q, qs) && q.getLoop() && q.getLoop()->slices.size() == p.getLoop()->slices.size(),
+              "lag: the session reopens with the 59 s loop (" + juce::String(restore, 0) + " ms on the host's thread)");
+        juce::MemoryBlock again;
+        t0 = juce::Time::getMillisecondCounterHiRes();
+        q.getStateInformation(again);
+        check(msSince(t0) < 20.0, "lag: a reopened session saves instantly too (" + juce::String(msSince(t0), 1) + " ms)");
+    }
+
+    // 3. the audio thread while a knob is being turned (automation every block)
+    double worstBlock = 0.0, total = 0.0; int blocks = 0;
+    juce::AudioBuffer<float> buf(2, block); juce::MidiBuffer midi;
+    auto* amt = p.state.getParameter("amount");
+    for (int material = 0; material < 3; ++material)
+    {
+        setChoice("material", (float) material);
+        setChoice("chop", 0.0f);
+        ser = p.getLoopSerial();
+        for (int i = 0; i < 600 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+        head.playing = true;
+        for (int b = 0; b < 4000; ++b)
+        {
+            head.ppq = b * block / sr * head.bpm / 60.0;
+            amt->setValueNotifyingHost((float) ((b % 200) / 200.0));
+            const double t = threadCpuMs();
+            p.processBlock(buf, midi);
+            const double ms = threadCpuMs() - t;
+            if (b > 10) { worstBlock = juce::jmax(worstBlock, ms); total += ms; ++blocks; }
+        }
+    }
+    std::printf("   audio thread, knob automated every block, all 3 cut modes: mean %.4f ms, worst %.3f ms of 2.67\n", total / blocks, worstBlock);
+    check(worstBlock < 0.6, "lag: worst audio block " + juce::String(worstBlock, 3) + " ms with a knob moving (< 0.6 ms of 2.67)");
+
+    // 4. drag-out of a long loop (rendered when the drag starts, on the UI thread)
+    {
+        t0 = juce::Time::getMillisecondCounterHiRes();
+        auto f = p.renderToFile(2);
+        const double cold = msSince(t0);
+        f.deleteFile();
+        p.state.getParameter("swing")->setValueNotifyingHost(0.3f);   // new settings, then the mouse reaches the button
+        p.prepareDragOut(2);
+        for (int i = 0; i < 1000 && ! p.isDragOutReady(2); ++i) juce::Thread::sleep(10);   // the mouse rests on the button
+        check(p.isDragOutReady(2), "lag: the drag-out is ready in the background");
+        t0 = juce::Time::getMillisecondCounterHiRes();
+        f = p.renderToFile(2);
+        const double warm = msSince(t0);
+        std::printf("   drag-out of the 59 s loop: %.0f ms cold, %.0f ms once the mouse is over the button\n", cold, warm);
+        check(f.existsAsFile() && warm < cold * 0.6, "lag: drag-out pre-rendered on hover starts in " + juce::String(warm, 0) + " ms (cold " + juce::String(cold, 0) + " ms)");
+        f.deleteFile();
+        p.state.getParameter("swing")->setValueNotifyingHost(0.0f);
+    }
+
+    // 5. the UI: one playing-frame repaint of the grid, and the whole editor
+    setChoice("material", 1.0f);
+    ser = p.getLoopSerial();
+    for (int i = 0; i < 600 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
+    ed->setSize(1160, 780);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+    juce::Component* grid = nullptr;
+    for (auto* c : ed->getChildren()) if (grid == nullptr && dynamic_cast<GrooveGrid*>(c) != nullptr) grid = c;   // the melody lane
+    double gridMs = 0.0, edMs = 0.0;
+    for (int i = 0; i < 10; ++i)
+    {
+        juce::Image img(juce::Image::ARGB, grid->getWidth(), grid->getHeight(), true);
+        juce::Graphics g(img);
+        t0 = juce::Time::getMillisecondCounterHiRes();
+        grid->paintEntireComponent(g, false);
+        gridMs = i == 0 ? 0.0 : juce::jmax(gridMs, msSince(t0));
+    }
+    for (int i = 0; i < 3; ++i)
+    {
+        t0 = juce::Time::getMillisecondCounterHiRes();
+        auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f);
+        edMs = juce::jmax(edMs, msSince(t0));
+    }
+    std::printf("   UI: grid frame %.2f ms (opaque: %s), whole editor %.1f ms\n", gridMs, grid->isOpaque() ? "yes" : "no - the panel behind it repaints too", edMs);
+    check(grid->isOpaque(), "lag: the grid is opaque, so playback frames don't repaint the panel behind it");
+    check(gridMs < 4.0, "lag: a playback frame of the grid draws in " + juce::String(gridMs, 2) + " ms (< 4)");
+    ed.reset();
+    big.deleteFile();
+}
+
 std::vector<int> onsets(const juce::AudioBuffer<float>& b)
 {
     std::vector<int> out; int silent = 100000;
@@ -93,6 +268,7 @@ int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
     const juce::File snapDir = argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]) : juce::File();
+    lagProfile();
 
     for (double sr : { 44100.0, 48000.0 })
     {
@@ -234,7 +410,9 @@ int main(int argc, char** argv)
             check(info.valid && std::abs(info.swingPercent - 63.0f) < 2.5f, tag + "learn: reads " + juce::String(info.swingPercent, 1) + " % swing from the reference (63 % in)");
             check(juce::roundToInt(p.state.getParameter("groove")->convertFrom0to1(p.state.getParameter("groove")->getValue())) == (int) bounce::Groove::learned,
                   tag + "learn: switches the groove to LEARNED");
-            p.state.getParameter("tighten")->setValueNotifyingHost(1.0f);
+            auto plain = [&p](const char* id) { auto* q = p.state.getParameter(id); return q->convertFrom0to1(q->getValue()); };
+            check(plain("tighten") > 99.0f && std::abs(plain("amount") - 100.0f) < 0.5f && plain("swing") < 0.5f && std::abs(plain("feel")) < 0.05f,
+                  tag + "match drums locks: tighten 100 %, amount 100 %, no extra swing / feel");
             p.prepareToPlay(sr, 256);
             auto lo = onsets(play(p, head, sr, 8.0));
             const double off = lo.size() > 1 ? (lo[1] - 3 * sps) / sps : -1.0;   // the loop's 2nd hit is 16th 3 (an off-16th)
@@ -317,6 +495,92 @@ int main(int argc, char** argv)
             for (int i = 0; i < 400 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
         }
 
+        // ---- v1.5: two lanes - melody + drums, each draggable in and out, locked into one pocket
+        {
+            using P = EpsilonBounceProcessor;
+            auto setChoice = [&p](const char* id, float v) { auto* q = p.state.getParameter(id); q->setValueNotifyingHost(q->convertTo0to1(v)); };
+            auto waitSlot = [&p](int slot, int before)
+            {
+                for (int i = 0; i < 400 && (p.getLoopSerial(slot) == before || p.isAnalysing(slot)); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+                return p.getLoopSerial(slot) != before;
+            };
+            const double sps = 60.0 / 140.0 / 4.0 * sr;
+            setChoice("material", 0.0f);
+            int ms = p.getLoopSerial(P::melody);
+            check(p.loadFile(writeLoop(sr), P::melody).isEmpty() && waitSlot(P::melody, ms), tag + "slots: melody lane loads");
+            for (int i = 0; i < 30; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            p.applyPreset(0);                                  // straight, tighten 100
+            check(! p.haveBoth() && p.leaderOf(P::melody) < 0, tag + "slots: one loop alone rides the chosen groove");
+
+            const auto rf = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-reference.wav");   // 63 % swing drums
+            const int ds = p.getLoopSerial(P::drums);
+            check(p.loadFile(rf, P::drums).isEmpty() && waitSlot(P::drums, ds), tag + "slots: drums lane loads");
+            const auto dInfo = p.getPocketInfo(P::drums);
+            check(p.getLoop(P::drums) && p.getLoop(P::drums)->slices.size() == 32, tag + "slots: drums cut on their 32 hits (" + juce::String(p.getLoop(P::drums) ? (int) p.getLoop(P::drums)->slices.size() : 0) + ")");
+            check(dInfo.valid && std::abs(dInfo.swingPercent - 63.0f) < 2.5f, tag + "slots: drums' pocket read as " + juce::String(dInfo.swingPercent, 1) + " % swing");
+            check(p.haveBoth() && p.link() == P::Link::drumsLead && p.leads(P::drums) && p.leaderOf(P::melody) == P::drums, tag + "slots: DRUMS LEAD by default, melody follows");
+
+            // melody alone in the output: its off-16th now lands where the drums' off-16ths land
+            setChoice("drumLevel", -60.0f);
+            p.prepareToPlay(sr, 256);
+            auto on = onsets(play(p, head, sr, 8.0));
+            double off = on.size() > 1 ? (on[1] - 3 * sps) / sps : -9.0;
+            check(std::abs(off - 0.26) < 0.04, tag + "DRUMS LEAD: melody's off-16th lands " + juce::String(off, 3) + " late (drums: 0.26)");
+            // drums alone: untouched feel
+            setChoice("drumLevel", 0.0f); setChoice("melLevel", -60.0f);
+            p.prepareToPlay(sr, 256);
+            on = onsets(play(p, head, sr, 8.0));
+            off = on.size() > 1 ? (on[1] - 1 * sps) / sps : -9.0;
+            check(on.size() == 32 && std::abs(off - 0.26) < 0.04, tag + "DRUMS LEAD: drums keep their own feel (" + juce::String((int) on.size()) + " hits, off-16th " + juce::String(off, 3) + ")");
+            // melody leads: the drums are pulled onto the (straight) melody's pocket
+            setChoice("link", 1.0f);
+            check(p.leads(P::melody) && p.leaderOf(P::drums) == P::melody, tag + "MELODY LEADS: drums follow");
+            p.prepareToPlay(sr, 256);
+            on = onsets(play(p, head, sr, 8.0));
+            off = on.size() > 1 ? (on[1] - 1 * sps) / sps : -9.0;
+            check(std::abs(off) < 0.04, tag + "MELODY LEADS: drums' off-16th pulled to the melody's straight pocket (" + juce::String(off, 3) + ")");
+            // groove: both ride the chosen groove (dembow pushes the a-of-1 by 0.20)
+            setChoice("link", 2.0f); setChoice("groove", 1.0f); setChoice("melLevel", 0.0f); setChoice("drumLevel", -60.0f);
+            check(p.leaderOf(P::melody) < 0 && ! p.leads(P::drums), tag + "GROOVE: nobody leads");
+            p.prepareToPlay(sr, 256);
+            on = onsets(play(p, head, sr, 8.0));
+            off = on.size() > 1 ? (on[1] - 3 * sps) / sps : -9.0;
+            check(std::abs(off - 0.20) < 0.03, tag + "GROOVE: melody back on dembow (" + juce::String(off, 3) + ")");
+            setChoice("drumLevel", 0.0f); setChoice("link", 0.0f);
+
+            // both lanes together: finite, sane level
+            p.prepareToPlay(sr, 256);
+            auto both = play(p, head, sr, 8.0, 97);
+            bool fin = true; for (int i = 0; i < both.getNumSamples(); ++i) fin &= std::isfinite(both.getSample(0, i));
+            check(fin && both.getMagnitude(0, both.getNumSamples()) < 1.6f && both.getMagnitude(0, both.getNumSamples()) > 0.3f, tag + "slots: both lanes play together");
+
+            // drag out, one file per lane
+            const auto fm = p.renderToFile(2, P::melody), fd = p.renderToFile(2, P::drums);
+            check(fm.existsAsFile() && fd.existsAsFile() && fm != fd, tag + "drag-out per lane: \"" + fm.getFileName() + "\" and \"" + fd.getFileName() + "\"");
+            check(fm.getFileName().containsIgnoreCase("locked to") && fd.getFileName().containsIgnoreCase("original feel"), tag + "drag-out files say what was done");
+            fm.deleteFile(); fd.deleteFile();
+
+            // session carries both loops and the link
+            juce::MemoryBlock st3;
+            p.getStateInformation(st3);
+            EpsilonBounceProcessor q3;
+            q3.setPlayConfigDetails(0, 2, sr, 256);
+            q3.prepareToPlay(sr, 256);
+            q3.setStateInformation(st3.getData(), (int) st3.getSize());
+            for (int i = 0; i < 600 && (! q3.getLoop(P::melody) || ! q3.getLoop(P::drums) || q3.isAnalysing(P::melody) || q3.isAnalysing(P::drums)); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            check(q3.haveBoth() && q3.getLoopName(P::drums) == p.getLoopName(P::drums) && q3.leaderOf(P::melody) == P::drums,
+                  tag + "session reload brings both lanes back (" + juce::String((int) (st3.getSize() / 1024)) + " KB)");
+
+            // clearing the drums: the melody is on its own groove again
+            p.clearSlot(P::drums);
+            for (int i = 0; i < 30; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            check(! p.haveBoth() && p.getLoop(P::drums) == nullptr && p.leaderOf(P::melody) < 0, tag + "slots: Clear empties a lane");
+            p.prepareToPlay(sr, 256);
+            auto after = play(p, head, sr, 4.0);
+            check(after.getMagnitude(0, after.getNumSamples()) > 0.1f, tag + "slots: melody still plays after the drums are cleared");
+            setChoice("groove", 0.0f);
+        }
+
         if (sr == 48000.0 && snapDir != juce::File())
         {
             snapDir.createDirectory();
@@ -326,11 +590,13 @@ int main(int argc, char** argv)
                 p.loadFile(juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-chords.wav"));
                 waitForLoop(p, ser);
                 p.applyPreset(3);
-                auto* gq = p.state.getParameter("groove"); gq->setValueNotifyingHost(gq->convertTo0to1((float) bounce::Groove::learned));
+                const int dser = p.getLoopSerial(EpsilonBounceProcessor::drums);
+                p.loadFile(juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bounce-bench-reference.wav"), EpsilonBounceProcessor::drums);
+                for (int i = 0; i < 400 && (p.getLoopSerial(EpsilonBounceProcessor::drums) == dser || p.isAnalysing(EpsilonBounceProcessor::drums)); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
                 for (int i = 0; i < 20; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
             }
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
-            ed->setSize(1080, 680);
+            ed->setSize(1160, 780);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(40);
             auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 2.0f);
             juce::PNGImageFormat png;
@@ -341,7 +607,7 @@ int main(int argc, char** argv)
 
             EpsilonBounceProcessor empty;
             std::unique_ptr<juce::AudioProcessorEditor> ed2(empty.createEditor());
-            ed2->setSize(1080, 680);
+            ed2->setSize(1160, 780);
             juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
             auto img2 = ed2->createComponentSnapshot(ed2->getLocalBounds(), true, 2.0f);
             auto file2 = snapDir.getChildFile("epsilon-bounce-empty.png");

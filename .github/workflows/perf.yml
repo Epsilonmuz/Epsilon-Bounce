@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths: [ 'Source/BounceEngine.h', 'Tests/EngineTests.cpp', '.github/workflows/perf.yml' ]
+    paths: [ 'Source/**', 'Shared/**', 'Tests/**', '.github/workflows/perf.yml' ]
 
 jobs:
   perf:
@@ -22,3 +22,10 @@ jobs:
           clang++ -std=c++17 -O3 -ISource Tests/EngineTests.cpp -o engine_tests
           ./engine_tests | tee result.txt
           grep PERF result.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: "Lag profile (the real plugin: host saves, analysis, audio under automation, drag-out, UI frames)"
+        run: |
+          git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git JUCE
+          cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DBOUNCE_BUILD_BENCH=ON
+          cmake --build build-perf --config Release --target BounceBench -j3
+          "$(find build-perf -type f -name BounceBench -perm -u+x | head -1)" | tee bench.txt
+          { echo '```'; sed -n '/lag profile/,/grid draws/p' bench.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
