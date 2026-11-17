@@ -2,6 +2,11 @@
 
 **Lock any melody, flipped sample or drum loop to your drums' groove** — or to 13 genre pockets and 42 presets. Drop an audio loop on the grid: Bounce finds every hit, slices it, and plays the slices back on your DAW's tempo with the groove you pick — so a stiff loop bounces, a straight hat pattern shuffles like UK drill, and anything you sample lands in the pocket at your project's BPM.
 
+## Install (no build needed)
+
+**Mac (Intel and Apple Silicon):** download [Epsilon Bounce for Mac](https://github.com/Epsilonmuz/Epsilon-Bounce/releases/latest/download/Epsilon-Bounce-macOS-Installer.pkg). Double-click it: the VST3 goes to `/Library/Audio/Plug-Ins/VST3`, the Audio Unit to `/Library/Audio/Plug-Ins/Components` and the standalone app to Applications. Then rescan in your DAW (FL Studio: Options > Manage plugins > Find installed plugins). The first time, macOS may say it can't check the installer (it isn't notarised by Apple): click Done, then System Settings > Privacy & Security > **Open Anyway**. No Terminal commands needed. The link always gives the newest build of `main`; it is rebuilt, test-installed on GitHub's Mac and replaced on every push.
+
+
 Part of the Epsilon line by **Epsilon Sounds**.
 
 **Manual:** [Epsilon Bounce Manual (PDF)](docs/Epsilon%20Bounce%20Manual.pdf) (v1.5) - the melody and drums lanes, the Pocket switch, every control drawn, all 13 pockets and 42 presets, and tips. The interactive version with the playable Pocket Lab is `docs/manual.html`.

@@ -10,6 +10,8 @@ on:
 jobs:
   mac:
     runs-on: macos-15
+    permissions:
+      contents: write
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -78,3 +80,17 @@ jobs:
         with:
           name: Epsilon-Bounce-v1.5.0-macOS
           path: out
+
+      - name: Installer (puts the VST3, AU and app in the right folders)
+        run: bash .github/scripts/make-mac-installer.sh "Epsilon Bounce" "out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Epsilon-Bounce-macOS-Installer
+          path: installer/*.pkg
+
+      - name: Publish the installer to the "latest" release (main only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/publish-latest.sh "Epsilon Bounce" installer/*.pkg
