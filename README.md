@@ -4,7 +4,7 @@
 
 Part of the Epsilon line by **Epsilon Sounds**.
 
-**Manual:** [Epsilon Bounce Manual (PDF)](docs/Epsilon%20Bounce%20Manual.pdf) - every control drawn, all 13 pockets and 42 presets, Groove Learn, and tips. The interactive version with the playable Pocket Lab is `docs/manual.html`.
+**Manual:** [Epsilon Bounce Manual (PDF)](docs/Epsilon%20Bounce%20Manual.pdf) (v1.5) - the melody and drums lanes, the Pocket switch, every control drawn, all 13 pockets and 42 presets, and tips. The interactive version with the playable Pocket Lab is `docs/manual.html`.
 
 ![Epsilon Bounce](docs/epsilon-bounce-editor.png)
 
