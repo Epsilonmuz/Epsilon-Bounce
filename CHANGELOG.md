@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.0 · "Two lanes" (2026-11-16)
+
+Built on 1.4.0. Plugin codes and existing parameter IDs are unchanged; 1.3 / 1.4 sessions open as before (their loop is the melody lane).
+
+**Melody + drums, each draggable in and out**
+- Bounce now holds two loops: a **MELODY** lane (melody, sample, chops) and a **DRUMS** lane (drums or percussion). Drop a file on a lane, or use Load melody / Load drums (the drums button still takes a dropped file).
+- Drag a lane, or its **Drag out** button, into the DAW to take that loop out as its own WAV. Files are named for what was done: "locked to <drums>", "original feel", or the groove name. Both drag-outs pre-render in the background on hover, as in 1.4.
+- **Pocket** switch, for when both lanes are loaded:
+  - **DRUMS LEAD** (default): the drums play with their own feel, untouched; the melody is locked into their pocket (the 1.4 lock: Tighten 100 %, the drums' microtiming at 100 %, nothing added). Markers along the top of the melody lane show where the drums hit.
+  - **MELODY LEADS**: the melody keeps its feel; the drums are locked to it.
+  - **GROOVE**: both lanes ride the groove / preset you pick.
+- While a lane leads, the groove picker and Amount / Swing / Tighten / Humanize / Feel are dimmed (the lock replaces them); Accent still applies.
+- Per-lane **Level** (fully down = off, e.g. when your drums already play in the DAW) and **Clear**.
+- Both loops and the Pocket setting are saved in the session, each compressed once in the background (the 1.4 lag fix applies to both).
+- The window is 1160 x 780.
+
+**Tests**
+- 17 new host-bench checks per sample rate: both link modes land the follower on the leader's pocket to within 0.04 of a 16th, the leader is untouched, per-lane drag-out, session round-trip with both loops, Clear.
+
 ## 1.4.0 · "No lag, any loop" (2026-11-15)
 
 Reviewed by a senior engineer, a UI specialist, an FL Studio producer, a product strategist and a DSP specialist. Plugin codes (`EpsS` / `EpBn`) and parameter IDs are unchanged, so 1.3 sessions open as before.

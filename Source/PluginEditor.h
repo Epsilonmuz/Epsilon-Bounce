@@ -4,12 +4,17 @@
 
 // The hero: the loop's waveform under a 16th grid. Each hit shows where it was (hollow tick) and
 // where the groove puts it (champagne bar), joined by a short line - you see the bounce.
-// Drop a loop to load it; hold Alt (Option) while dropping to learn its groove instead.
-class GrooveGrid : public juce::Component, public juce::FileDragAndDropTarget
+// One lane per slot (v1.5): MELODY on top, DRUMS under it. Drop a loop on a lane to load it there;
+// drag the lane (or its Drag out button) into the DAW to take the re-grooved loop out.
+class GrooveGrid : public juce::Component, public juce::FileDragAndDropTarget, public juce::SettableTooltipClient
 {
 public:
-    explicit GrooveGrid(EpsilonBounceProcessor& p) : proc(p) {}
-    std::function<void(const juce::File&, bool learn)> onFileDropped;
+    GrooveGrid(EpsilonBounceProcessor& p, int slotIndex) : proc(p), slot(slotIndex) {}
+    std::function<void(const juce::File&, bool alt)> onFileDropped;
+    std::function<void()> onDragOut, onHover;
+    void mouseEnter(const juce::MouseEvent&) override { if (loop && onHover) onHover(); }
+    void mouseDrag(const juce::MouseEvent& e) override { if (loop && ! dragging && e.getDistanceFromDragStart() > 8 && onDragOut) { dragging = true; onDragOut(); } }
+    void mouseUp(const juce::MouseEvent&) override { dragging = false; }
     void refresh(bool force);
     void paint(juce::Graphics&) override;
     void resized() override { cache = {}; }
@@ -20,6 +25,8 @@ public:
 
 private:
     EpsilonBounceProcessor& proc;
+    int slot = 0, lastLeader = -2;
+    bool dragging = false, lastLeads = false;
     std::shared_ptr<const bounce::LoopData> loop;
     std::vector<bounce::Placement> places;
     bounce::GrooveSettings lastG {};
@@ -30,7 +37,7 @@ private:
     void renderCache();
 };
 
-// "Match drums": click to choose your drum loop, or drop it straight onto the button.
+// "Load drums": click to choose your drum loop, or drop it straight onto the button.
 struct DropButton : juce::TextButton, juce::FileDragAndDropTarget
 {
     using juce::TextButton::TextButton;
@@ -60,14 +67,17 @@ private:
     epsilon_ui::FooterBar footer { epsilon_ui::Tier::Epsilon, JucePlugin_VersionString };
     juce::TooltipWindow tooltips { this, 700 };
 
-    juce::TextButton loadButton { "Load loop" }, previewButton { "Preview" };
-    DropButton learnButton { "Match drums" };
+    juce::TextButton loadButton { "Load melody" }, previewButton { "Preview" };
+    DropButton learnButton { "Load drums" };
+    juce::TextButton clearMel { "Clear" }, clearDrum { "Clear" };
+    std::unique_ptr<juce::TextButton> dragMel, dragDrum;   // drag-to-DAW sources, one per lane
+    epsilon_ui::ModeSwitch linkSwitch { proc.state, "link" };
+    epsilon_ui::Knob melLevel { proc.state, "melLevel", "Level" }, drumLevel { proc.state, "drumLevel", "Level" };
     juce::TextButton holdButton { "Hold: auto" }, alignButton { "Auto-align" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAttachment;
     juce::TextButton prevPreset { "<" }, nextPreset { ">" };
     juce::ComboBox presetBox;
-    std::unique_ptr<juce::TextButton> dragOwned;   // drag-to-DAW source
-    GrooveGrid grid { proc };
+    GrooveGrid grid { proc, EpsilonBounceProcessor::melody }, drumGrid { proc, EpsilonBounceProcessor::drums };
     epsilon_ui::ModeSwitch grooveSwitch { proc.state, "groove" };
     epsilon_ui::ModeSwitch timeSwitch { proc.state, "time" };
     epsilon_ui::ModeSwitch materialSwitch { proc.state, "material" };
@@ -89,8 +99,9 @@ private:
     bool messageIsNote = false;       // grey info line instead of a red problem
     int shownLearnSerial = -1, shownNoteSerial = 0;
 
-    void load(const juce::File& f, bool learn);
-    void chooseFile(bool learn);
+    void load(const juce::File& f, int slot);
+    void chooseFile(int slot);
+    void dragOut(int slot);
     void buildPresetMenu();
     void timerCallback() override;
 

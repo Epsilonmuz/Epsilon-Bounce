@@ -8,6 +8,20 @@ Part of the Epsilon line by **Epsilon Sounds**.
 
 ![Epsilon Bounce](docs/epsilon-bounce-editor.png)
 
+## Two lanes: melody + drums (v1.5)
+
+Bounce holds **two loops**: a **MELODY** lane (melody, sample, chops) and a **DRUMS** lane (drums or percussion). Drop a file on a lane (or use Load melody / Load drums), and drag a lane - or its **Drag out** button - into your DAW to take that loop out as its own WAV.
+
+**Pocket** decides who sets the feel when both lanes are loaded:
+
+| Pocket | What happens |
+|---|---|
+| **DRUMS LEAD** (default) | The drums keep their own feel, untouched. Bounce reads their pocket and locks the melody into it. Markers along the top of the melody lane show where the drums hit. |
+| **MELODY LEADS** | The melody keeps its feel; the drums are locked into the melody's pocket. |
+| **GROOVE** | Both lanes ride the groove / preset you pick (dembow, drill, trap ...). |
+
+Each lane has its own **Level** (fully down = off, e.g. when your drums already play in the DAW) and **Clear**. With one lane loaded Bounce works exactly as before. Both loops and the Pocket setting are saved in the session.
+
 ## Lock a melody to your drums (3 moves)
 
 1. **Drop the melody** (or chords, or a flipped sample) on the grid. Bounce hears whether it's drums or a melody and picks the cut mode for you: notes and chord changes for melodies, hits for drums.
