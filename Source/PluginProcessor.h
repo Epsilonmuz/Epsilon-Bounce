@@ -99,6 +99,9 @@ private:
         int flacFor = -1, rawSerial = 0;                      // guarded by loopLock: which raw audio the cache holds
         std::atomic<int> serial { 0 }, playingSlice { -1 };
         bool detectOnNextAnalysis = false;
+        // The project tempo when this loop was loaded (0 = not known yet). The loop is always read on
+        // this tempo, so changing the project tempo later never re-cuts it: it just plays faster or slower.
+        std::atomic<double> madeAtBpm { 0.0 };
         juce::MemoryBlock dragCache;                          // guarded by loopLock
         juce::String dragCacheKey, dragPendingKey;            // guarded by loopLock
         // this loop's own pocket (microtiming + accents), readable from the audio thread without locks
@@ -126,6 +129,7 @@ private:
     juce::String dragKey(int loops, int slot) const;
     static juce::MemoryBlock renderDragBytes(std::shared_ptr<const bounce::LoopData>, const bounce::GrooveSettings&, double bpm, double outRate, float gain, int loops);
     double analysisTempoHint() const;
+    double tempoHintFor(int slot) const { return slots[(size_t) slot].madeAtBpm.load(std::memory_order_relaxed); }
 
     // learned groove, readable from the audio thread without locks
     std::array<std::atomic<float>, bounce::stepsPerBar * 2> learnedAtoms {};
@@ -148,7 +152,7 @@ private:
     std::atomic<float>* pShift; std::atomic<float>* pAlign;
     std::atomic<float>* pLink; std::atomic<float>* pMelLevel; std::atomic<float>* pDrumLevel;
 
-    void setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name);
+    void setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name, double madeAtBpm = -1.0);
     void startAnalysis(int slot);
     void publish(int slot, std::shared_ptr<const bounce::LoopData> loop);
     void timerCallback() override;                           // frees retired loops, re-analyses on slicing changes

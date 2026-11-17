@@ -52,6 +52,31 @@ juce::File writeLoop(double sr)
     return f;
 }
 
+// A loop bounced from the project at `bpm`: hits exactly on the given 16ths, then `tailBars` of
+// ringing tail (a reverb / delay tail or a little silence), as FL Studio exports it.
+juce::File writeGridLoop(double sr, double bpm, int bars, double tailBars, const std::vector<int>& steps, const char* name)
+{
+    const double sps = 60.0 / bpm / 4.0 * sr;
+    const int len = (int) std::lround((bars + tailBars) * 16.0 * sps);
+    juce::AudioBuffer<float> b(2, len); b.clear();
+    juce::Random rng(7);
+    for (auto st : steps)
+    {
+        const int at = (int) std::lround(st * sps);
+        for (int i = 0; i < (int) (0.05 * sr) && at + i < len; ++i)
+        {
+            const float v = std::exp(-(float) i / (float) (0.010 * sr)) * 0.7f * (rng.nextFloat() * 2.0f - 1.0f);
+            b.setSample(0, at + i, v); b.setSample(1, at + i, v);
+        }
+    }
+    auto f = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile(name);
+    f.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(f.createOutputStream().release(), sr, 2, 24, {}, 0));
+    w->writeFromAudioSampleBuffer(b, 0, len);
+    return f;
+}
+
 bool waitForLoop(EpsilonBounceProcessor& p, int serialBefore)
 {
     for (int i = 0; i < 400; ++i)
@@ -579,6 +604,91 @@ int main(int argc, char** argv)
             auto after = play(p, head, sr, 4.0);
             check(after.getMagnitude(0, after.getNumSamples()) > 0.1f, tag + "slots: melody still plays after the drums are cleared");
             setChoice("groove", 0.0f);
+        }
+
+        // ---- v1.5.1: changing the project tempo keeps melody and drums lined up.
+        // Both loops were bounced at 140 with tails of different lengths. Before the fix, moving the
+        // project to 150 re-read them on the NEW tempo: the drums (4.15 bars at 140 = 4.45 bars at 150)
+        // were mistaken for a 4-bar loop at 150 with a long tail, the melody fell back to its raw length,
+        // and the two lanes landed on different grids.
+        {
+            using P = EpsilonBounceProcessor;
+            EpsilonBounceProcessor t;
+            Head th; th.bpm = 140.0;
+            t.setPlayHead(&th);
+            t.setPlayConfigDetails(0, 2, sr, 256);
+            t.prepareToPlay(sr, 256);
+            auto setT = [&t](const char* id, float v) { auto* q = t.state.getParameter(id); q->setValueNotifyingHost(q->convertTo0to1(v)); };
+            auto settle = [&t]
+            {
+                for (int i = 0; i < 600; ++i)
+                {
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+                    if (i > 30 && ! t.isAnalysing(P::melody) && ! t.isAnalysing(P::drums)) break;
+                }
+            };
+            juce::AudioBuffer<float> warm(2, 256);
+            juce::MidiBuffer noMidi;
+            auto runBlocks = [&] (int n) { for (int i = 0; i < n; ++i) { warm.clear(); t.processBlock(warm, noMidi); } };
+
+            runBlocks(4);                          // the host has told Bounce its tempo before the loops arrive
+            setT("material", 0.0f);
+            setT("link", 2.0f);                    // GROOVE: both lanes ride the same straight grid
+            t.applyPreset(0);
+            setT("accent", 0.0f);
+
+            const std::vector<int> drumHits { 0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60 };
+            std::vector<int> melHits; for (int s = 0; s < 128; s += 8) melHits.push_back(s + 2);
+            const int ms = t.getLoopSerial(P::melody), ds = t.getLoopSerial(P::drums);
+            check(t.loadFile(writeGridLoop(sr, 140.0, 8, 0.30, melHits, "bounce-bench-mel140.wav"), P::melody).isEmpty(), tag + "tempo: 8-bar melody made at 140 loads");
+            check(t.loadFile(writeGridLoop(sr, 140.0, 4, 0.15, drumHits, "bounce-bench-drm140.wav"), P::drums).isEmpty(), tag + "tempo: 4-bar drums made at 140 load");
+            settle();
+            check(t.getLoopSerial(P::melody) != ms && t.getLoopSerial(P::drums) != ds, tag + "tempo: both lanes analysed");
+
+            auto gridError = [&] (int keepSlot, double bpm, const std::vector<int>& hits, int loopSteps)
+            {
+                setT("melLevel", keepSlot == P::melody ? 0.0f : -60.0f);
+                setT("drumLevel", keepSlot == P::drums ? 0.0f : -60.0f);
+                th.bpm = bpm;
+                t.prepareToPlay(sr, 256);
+                const auto on = onsets(play(t, th, sr, loopSteps / 4.0));
+                const double sps = 60.0 / bpm / 4.0 * sr;
+                double worst = on.size() == hits.size() ? 0.0 : 1e9;
+                for (size_t i = 0; i < on.size() && i < hits.size(); ++i) worst = std::max(worst, std::abs(on[i] - hits[i] * sps) / sr * 1000.0);
+                return worst;
+            };
+
+            const double m140 = gridError(P::melody, 140.0, melHits, 128), d140 = gridError(P::drums, 140.0, drumHits, 64);
+            check(m140 < 1.0 && d140 < 1.0, tag + "tempo: at 140 both lanes sit on the grid (melody " + juce::String(m140, 2) + " ms, drums " + juce::String(d140, 2) + " ms)");
+
+            th.bpm = 150.0;                       // the producer speeds the project up
+            runBlocks(4);
+            settle();
+            const auto mel = t.getLoop(P::melody), drm = t.getLoop(P::drums);
+            check(mel && drm && mel->bars == 8 && drm->bars == 4 && std::abs(mel->bpm - 140.0) < 0.01 && std::abs(drm->bpm - 140.0) < 0.01,
+                  tag + "tempo: after the project goes to 150, both loops are still read as made at 140 ("
+                      + juce::String(mel ? mel->bars : 0) + " bars at " + juce::String(mel ? mel->bpm : 0.0, 1) + ", "
+                      + juce::String(drm ? drm->bars : 0) + " bars at " + juce::String(drm ? drm->bpm : 0.0, 1) + ")");
+            const double m150 = gridError(P::melody, 150.0, melHits, 128), d150 = gridError(P::drums, 150.0, drumHits, 64);
+            check(m150 < 1.0 && d150 < 1.0, tag + "tempo: at 150 both lanes land on the 150 grid together (melody " + juce::String(m150, 2) + " ms, drums " + juce::String(d150, 2) + " ms)");
+            const double m120 = gridError(P::melody, 120.0, melHits, 128), d120 = gridError(P::drums, 120.0, drumHits, 64);
+            check(m120 < 1.0 && d120 < 1.0, tag + "tempo: slowed to 120 they still line up (melody " + juce::String(m120, 2) + " ms, drums " + juce::String(d120, 2) + " ms)");
+
+            // The tempo each loop was made at travels with the session: reopening at 150 doesn't re-read them.
+            juce::MemoryBlock st4;
+            t.getStateInformation(st4);
+            EpsilonBounceProcessor u;
+            Head uh; uh.bpm = 150.0;
+            u.setPlayHead(&uh);
+            u.setPlayConfigDetails(0, 2, sr, 256);
+            u.prepareToPlay(sr, 256);
+            u.setStateInformation(st4.getData(), (int) st4.getSize());
+            for (int i = 0; i < 4; ++i) { warm.clear(); u.processBlock(warm, noMidi); }
+            for (int i = 0; i < 600 && (! u.getLoop(P::melody) || ! u.getLoop(P::drums) || u.isAnalysing(P::melody) || u.isAnalysing(P::drums) || i < 40); ++i)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            const auto um = u.getLoop(P::melody), ud = u.getLoop(P::drums);
+            check(um && ud && std::abs(um->bpm - 140.0) < 0.01 && std::abs(ud->bpm - 140.0) < 0.01 && um->bars == 8 && ud->bars == 4,
+                  tag + "tempo: a session reopened at 150 still knows both loops were made at 140");
         }
 
         if (sr == 48000.0 && snapDir != juce::File())

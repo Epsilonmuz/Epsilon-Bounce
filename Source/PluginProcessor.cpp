@@ -115,10 +115,10 @@ bool EpsilonBounceProcessor::holdActive() const
 juce::String EpsilonBounceProcessor::sliceKey(int slot) const
 {
     if (slot == drums)                                       // drums are always cut on their hits
-        return juce::String(pAlign->load() >= 0.5f ? 1 : 0) + "|" + juce::String(analysisTempoHint(), 1);
+        return juce::String(pAlign->load() >= 0.5f ? 1 : 0) + "|" + juce::String(tempoHintFor(slot), 1);
     return juce::String(juce::roundToInt(pSensitivity->load())) + "|" + juce::String(juce::roundToInt(pBars->load())) + "|"
          + juce::String((int) material()) + "|" + juce::String(juce::roundToInt(pChop->load())) + "|" + juce::String(pAlign->load() >= 0.5f ? 1 : 0)
-         + "|" + juce::String(analysisTempoHint(), 1);
+         + "|" + juce::String(tempoHintFor(slot), 1);
 }
 
 bounce::GrooveTemplate EpsilonBounceProcessor::readPocket(int slot) const
@@ -239,10 +239,9 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         any |= l != nullptr;
     }
     const auto release = [this] { for (auto& sl : slots) sl.inUse.store(nullptr, std::memory_order_release); };
-    if (! any || frames == 0) { for (auto& sl : slots) sl.playingSlice.store(-1); release(); return; }
-    const auto* first = loops[melody] != nullptr ? loops[melody] : loops[drums];
 
-    // Transport
+    // Transport. Read before the empty-plugin early return: the project tempo must be known before
+    // the first loop arrives, so that loop is read on it straight away (not re-cut at the first play).
     const bool sync = pSync->load(std::memory_order_relaxed) >= 0.5f;
     bool playing = false; double bpm = pTempo->load(std::memory_order_relaxed), stepStart = 0.0;
     if (auto* ph = getPlayHead())
@@ -253,6 +252,9 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             if (sync && pos->getIsPlaying())
                 if (auto ppq = pos->getPpqPosition()) { playing = true; stepStart = *ppq * 4.0; }
         }
+
+    if (! any || frames == 0) { for (auto& sl : slots) sl.playingSlice.store(-1); release(); return; }
+    const auto* first = loops[melody] != nullptr ? loops[melody] : loops[drums];
     // Time modality: half-time plays the loop's grid at half speed, double-time at twice.
     const double k = timeFactor();
     stepStart *= k;
@@ -331,12 +333,13 @@ juce::String EpsilonBounceProcessor::loadFile(const juce::File& file, int slot)
     return {};
 }
 
-void EpsilonBounceProcessor::setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name)
+void EpsilonBounceProcessor::setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name, double madeAtBpm)
 {
     {
         const juce::ScopedLock sl(loopLock);
         auto& s = slots[(size_t) slot];
         s.rawL = std::move(l); s.rawR = std::move(r); s.rawRate = sr; s.name = name;
+        s.madeAtBpm.store(madeAtBpm >= 0.0 ? madeAtBpm : analysisTempoHint(), std::memory_order_relaxed);
         ++s.rawSerial;
     }
     startAnalysis(slot);
@@ -350,6 +353,7 @@ void EpsilonBounceProcessor::clearSlot(int slot)
         const juce::ScopedLock sl(loopLock);
         auto& s = slots[(size_t) slot];
         s.rawL.clear(); s.rawR.clear(); s.name.clear();
+        s.madeAtBpm.store(0.0, std::memory_order_relaxed);
         s.flacCache.reset(); s.flacFor = -1; ++s.rawSerial;
         s.dragCache.reset(); s.dragCacheKey.clear(); s.dragPendingKey.clear();
     }
@@ -408,7 +412,7 @@ void EpsilonBounceProcessor::startAnalysis(int slot)
         a.gridDiv = juce::roundToInt(pChop->load()) == 2 ? 4 : juce::roundToInt(pChop->load()) == 1 ? 2 : 1;
     }
     a.autoAlign = pAlign->load() >= 0.5f;
-    a.tempoHint = analysisTempoHint();
+    a.tempoHint = tempoHintFor(slot);   // the tempo it was loaded at: a later project tempo change never re-cuts it
     a.cancel = &s.cancelAnalysis;
     s.lastSliceKey = sliceKey(slot);
     s.analysing = true;
@@ -496,6 +500,14 @@ void EpsilonBounceProcessor::timerCallback()
             const juce::ScopedLock sl(loopLock);
             const auto* busy = s.inUse.load(std::memory_order_acquire);
             s.retired.erase(std::remove_if(s.retired.begin(), s.retired.end(), [busy](const auto& p) { return p.get() != busy; }), s.retired.end());
+        }
+        // A loop that arrived before the host said its tempo (sync off, or an old session) takes the
+        // project tempo once, the first time it is known. After that it never changes.
+        if (s.madeAtBpm.load(std::memory_order_relaxed) <= 0.0 && analysisTempoHint() > 0.0)
+        {
+            bool have;
+            { const juce::ScopedLock sl(loopLock); have = ! s.rawL.empty(); }
+            if (have) s.madeAtBpm.store(analysisTempoHint(), std::memory_order_relaxed);
         }
         // Slicing controls changed: re-analyse (debounced by the 10 Hz timer). A run that is already out of
         // date is abandoned instead of finished, so a knob that is still moving never queues up seconds of work.
@@ -746,6 +758,7 @@ void EpsilonBounceProcessor::getStateInformation(juce::MemoryBlock& dest)
         if (s.flacFor != s.rawSerial) { s.flacCache = encodeFlac(s.rawL, s.rawR, s.rawRate); s.flacFor = s.rawSerial; }
         juce::ValueTree audio(i == melody ? "Loop" : "Drums");
         audio.setProperty("name", s.name, nullptr);
+        audio.setProperty("madeAtBpm", s.madeAtBpm.load(std::memory_order_relaxed), nullptr);
         audio.setProperty("flac", juce::var(s.flacCache), nullptr);
         tree.appendChild(audio, nullptr);
     }
@@ -801,8 +814,10 @@ void EpsilonBounceProcessor::setStateInformation(const void* data, int size)
                 const int n = (int) r->lengthInSamples;
                 juce::AudioBuffer<float> buf(2, n);
                 r->read(&buf, 0, n, 0, true, true);
+                // 1.5.0 and older sessions don't know the made-at tempo: 0 = take the project tempo once it is known.
+                const double madeAt = audio.hasProperty("madeAtBpm") ? (double) audio.getProperty("madeAtBpm") : 0.0;
                 setRawAudio(i, { buf.getReadPointer(0), buf.getReadPointer(0) + n }, { buf.getReadPointer(1), buf.getReadPointer(1) + n },
-                            r->sampleRate, audio.getProperty("name").toString());
+                            r->sampleRate, audio.getProperty("name").toString(), madeAt);
                 const juce::ScopedLock sl(loopLock);
                 slots[(size_t) i].flacCache = *mb;              // the session already holds it encoded
                 slots[(size_t) i].flacFor = slots[(size_t) i].rawSerial;

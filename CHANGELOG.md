@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.1 · "Tempo-proof" (2026-11-17)
+
+Fix. Plugin codes, parameter IDs and sessions are unchanged.
+
+**Changing the project tempo no longer pulls the melody and drums apart**
+- Each loop now remembers the project tempo it was loaded at and is always read on that tempo. Change the project tempo afterwards and both lanes just play faster or slower on the new grid, together.
+- Before, every tempo change re-read both loops on the *new* tempo. Speed a project up by up to ~12 % and a loop with a tail (reverb, delay, a little silence) was mistaken for one made at the new tempo, so its grid shrank. The other lane, with a different length, was read differently, and the two drifted apart. Example from the new test: 4-bar drums and an 8-bar melody made at 140, project moved to 150 → drums were read as 4 bars at 150, melody as 8 bars at 134.9.
+- Bounce now reads the project tempo even before any loop is loaded, so a new loop is cut on the right grid straight away (before, it was cut on its raw length and only corrected at the first play).
+- The made-at tempo is saved in the session. 1.5.0 sessions take the project tempo once when reopened, as before, and keep it from then on.
+
+**Tests**
+- 8 new host-bench checks per sample rate: two loops made at 140 with different tails stay on the grid at 140, 150 and 120 BPM (worst 0.4 ms), are still read as made at 140 after the tempo change, and a session reopened at 150 keeps that.
+
 ## 1.5.0 · "Two lanes" (2026-11-16)
 
 Built on 1.4.0. Plugin codes and existing parameter IDs are unchanged; 1.3 / 1.4 sessions open as before (their loop is the melody lane).
