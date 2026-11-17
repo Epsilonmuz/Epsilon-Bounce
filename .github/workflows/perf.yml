@@ -22,7 +22,7 @@ jobs:
           clang++ -std=c++17 -O3 -ISource Tests/EngineTests.cpp -o engine_tests
           ./engine_tests | tee result.txt
           grep PERF result.txt >> "$GITHUB_STEP_SUMMARY"
-      - name: Lag profile (the real plugin: host saves, analysis, audio under automation, drag-out, UI frames)
+      - name: "Lag profile (the real plugin: host saves, analysis, audio under automation, drag-out, UI frames)"
         run: |
           git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git JUCE
           cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DBOUNCE_BUILD_BENCH=ON
