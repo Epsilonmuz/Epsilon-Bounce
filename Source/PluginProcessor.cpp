@@ -763,6 +763,10 @@ void EpsilonBounceProcessor::getStateInformation(juce::MemoryBlock& dest)
         tree.appendChild(audio, nullptr);
     }
     // Binary, not XML: the loop is megabytes, and base64-in-XML made every host save slow.
+    // Reserve the whole size once: growing a multi-megabyte block step by step cost up to ~20 ms per save.
+    size_t expected = 64 * 1024;
+    for (const auto& s : slots) expected += s.flacCache.getSize();
+    dest.ensureSize(expected, false);
     juce::MemoryOutputStream out(dest, false);
     out.write(stateMagic, 4);
     tree.writeToStream(out);

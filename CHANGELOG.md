@@ -9,6 +9,7 @@ Fix. Plugin codes, parameter IDs and sessions are unchanged.
 - Before, every tempo change re-read both loops on the *new* tempo. Speed a project up by up to ~12 % and a loop with a tail (reverb, delay, a little silence) was mistaken for one made at the new tempo, so its grid shrank. The other lane, with a different length, was read differently, and the two drifted apart. Example from the new test: 4-bar drums and an 8-bar melody made at 140, project moved to 150 → drums were read as 4 bars at 150, melody as 8 bars at 134.9.
 - Bounce now reads the project tempo even before any loop is loaded, so a new loop is cut on the right grid straight away (before, it was cut on its raw length and only corrected at the first play).
 - The made-at tempo is saved in the session. 1.5.0 sessions take the project tempo once when reopened, as before, and keep it from then on.
+- Saving the session reserves its memory in one go instead of growing a multi-megabyte buffer step by step, so FL Studio's frequent saves stay quick.
 
 **Tests**
 - 8 new host-bench checks per sample rate: two loops made at 140 with different tails stay on the grid at 140, 150 and 120 BPM (worst 0.4 ms), are still read as made at 140 after the tempo change, and a session reopened at 150 keeps that.
