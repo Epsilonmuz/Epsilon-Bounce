@@ -12,6 +12,7 @@ Fix. Plugin codes, parameter IDs and sessions are unchanged.
 - Saving the session reserves its memory in one go instead of growing a multi-megabyte buffer step by step, so FL Studio's frequent saves stay quick.
 
 **Tests**
+- The audio-thread lag check now gates on the 99.9th-percentile block (< 0.6 ms) plus "no block ever misses its 2.67 ms deadline". The raw worst block swung from 0.08 to 1.7 ms between runs of the same code on shared CI Macs.
 - 8 new host-bench checks per sample rate: two loops made at 140 with different tails stay on the grid at 140, 150 and 120 BPM (worst 0.4 ms), are still read as made at 140 after the tempo change, and a session reopened at 150 keeps that.
 
 ## 1.5.0 · "Two lanes" (2026-11-16)
