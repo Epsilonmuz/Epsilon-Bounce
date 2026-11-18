@@ -89,6 +89,33 @@ bool waitForLoop(EpsilonBounceProcessor& p, int serialBefore)
 
 // A long, dense melodic loop: chords changing every 8th with plucked attacks, 8 bars at 90 BPM (~21 s),
 // or 60 s for the worst case. The kind of sample that used to make Bounce lag.
+// A tonal loop of short plucks (silence between them), cycling through a phrase: a melody at `bpm`.
+juce::File writePluckLoop(double sr, double bpm, int bars, int everySteps, const char* name)
+{
+    const double sps = 60.0 / bpm / 4.0 * sr;
+    const int len = (int) std::lround(bars * 16 * sps);
+    juce::AudioBuffer<float> b(2, len); b.clear();
+    const int notes[] { 57, 60, 64, 62, 60, 55, 57, 64 };
+    int k = 0;
+    for (int st = 0; st < bars * 16; st += everySteps, ++k)
+    {
+        const int at = (int) std::lround(st * sps);
+        const double hz = 440.0 * std::pow(2.0, (notes[k % 8] - 69) / 12.0);
+        for (int i = 0; i < (int) (0.09 * sr) && at + i < len; ++i)
+        {
+            const double t = i / sr;
+            const float v = (float) (0.5 * std::exp(-t * 45.0) * (std::sin(2.0 * juce::MathConstants<double>::pi * hz * t) + 0.3 * std::sin(4.0 * juce::MathConstants<double>::pi * hz * t)));
+            b.setSample(0, at + i, v); b.setSample(1, at + i, v);
+        }
+    }
+    auto f = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile(name);
+    f.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(f.createOutputStream().release(), sr, 2, 24, {}, 0));
+    w->writeFromAudioSampleBuffer(b, 0, len);
+    return f;
+}
+
 juce::File writeLongMelody(double sr, double seconds, const char* name)
 {
     const int len = (int) (seconds * sr);
@@ -151,13 +178,23 @@ void lagProfile()
     double t0 = juce::Time::getMillisecondCounterHiRes();
     p.loadFile(big);
     const double loadCall = msSince(t0);
-    waitForLoop(p, ser);
-    const double analyse = msSince(t0);
-    std::printf("   load call (message thread): %.1f ms, analysis of 59 s melodic: %.0f ms, %d slices\n", loadCall, analyse, p.getLoop() ? (int) p.getLoop()->slices.size() : 0);
+    // v1.6: the loop is playable as soon as it is cut (first publish); the tempo match (a 90 BPM sample in a
+    // 140 project: stretched, pitch kept) follows in the background and replaces it when it's ready.
+    double analyse = -1.0;
+    for (int i = 0; i < 2000; ++i)
+    {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(5);
+        if (analyse < 0.0 && p.getLoopSerial() != ser) analyse = msSince(t0);
+        if (analyse >= 0.0 && ! p.isAnalysing()) break;
+    }
+    const double matched = msSince(t0);
+    std::printf("   load call (message thread): %.1f ms, 59 s melodic playable after %.0f ms, tempo-matched after %.0f ms (%s), %d slices\n", loadCall, analyse, matched,
+                p.isStretched(EpsilonBounceProcessor::melody) ? "stretched" : "not stretched", p.getLoop() ? (int) p.getLoop()->slices.size() : 0);
     // 250 ms: GitHub's shared macOS runners read and decode the 30 MB test file about 4x slower than a
     // real machine (167 ms there, 37 ms on the Linux bench). The load path itself is unchanged since 1.4.
     check(loadCall < 250.0, "lag: loading a 59 s file blocks the UI for " + juce::String(loadCall, 1) + " ms (< 250)");
-    check(analyse < 4000.0, "lag: 59 s melodic sample analysed in " + juce::String(analyse, 0) + " ms (< 4 s, off the UI thread; was 3.5 s here)");
+    check(analyse >= 0.0 && analyse < 4000.0, "lag: 59 s melodic sample playable in " + juce::String(analyse, 0) + " ms (< 4 s, off the UI thread; was 3.5 s here)");
+    check(matched < 9000.0, "lag: ...and tempo-matched to the project in " + juce::String(matched, 0) + " ms (< 9 s, in the background)");
 
     // 2. the host asking for the session (FL Studio does this a lot: undo history, autosave)
     juce::MemoryBlock st;
@@ -173,13 +210,18 @@ void lagProfile()
     check(worstState < 20.0, "lag: the host saving the session takes " + juce::String(worstState, 1) + " ms (< 20, was 265 ms: a full FLAC encode every time)");
     {
         EpsilonBounceProcessor q;
+        Head qh;                                   // the host tells the reopened plugin the same tempo
+        q.setPlayHead(&qh);
         q.setPlayConfigDetails(0, 2, sr, block);
         q.prepareToPlay(sr, block);
+        { juce::AudioBuffer<float> wb(2, block); juce::MidiBuffer wm; for (int i = 0; i < 2; ++i) { wb.clear(); q.processBlock(wb, wm); } }
         const int qs = q.getLoopSerial();
         t0 = juce::Time::getMillisecondCounterHiRes();
         q.setStateInformation(st.getData(), (int) st.getSize());
         const double restore = msSince(t0);
-        check(waitForLoop(q, qs) && q.getLoop() && q.getLoop()->slices.size() == p.getLoop()->slices.size(),
+        bool back = false;
+        for (int i = 0; i < 2000 && ! back; ++i) { juce::MessageManager::getInstance()->runDispatchLoopUntil(5); back = q.getLoopSerial() != qs && ! q.isAnalysing(); }
+        check(back && q.getLoop() && q.getLoop()->slices.size() == p.getLoop()->slices.size(),
               "lag: the session reopens with the 59 s loop (" + juce::String(restore, 0) + " ms on the host's thread)");
         juce::MemoryBlock again;
         t0 = juce::Time::getMillisecondCounterHiRes();
@@ -241,7 +283,7 @@ void lagProfile()
     ser = p.getLoopSerial();
     for (int i = 0; i < 600 && (p.getLoopSerial() == ser || p.isAnalysing()); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
     std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
-    ed->setSize(1160, 780);
+    ed->setSize(1160, 840);
     juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
     juce::Component* grid = nullptr;
     for (auto* c : ed->getChildren()) if (grid == nullptr && dynamic_cast<GrooveGrid*>(c) != nullptr) grid = c;   // the melody lane
@@ -697,6 +739,123 @@ int main(int argc, char** argv)
                   tag + "tempo: a session reopened at 150 still knows both loops were made at 140");
         }
 
+
+        // ---- v1.6: tempo match first. A 92 BPM melody and 140 BPM drums in a 140 project: the melody's own
+        // tempo is found, it is stretched to 140 (pitch kept) and its notes land on the 140 grid; the drums,
+        // already at 140, are left alone. Then the project moves to 150 and the melody follows.
+        {
+            using P = EpsilonBounceProcessor;
+            EpsilonBounceProcessor t;
+            Head th; th.bpm = 140.0;
+            t.setPlayHead(&th);
+            t.setPlayConfigDetails(0, 2, sr, 256);
+            t.prepareToPlay(sr, 256);
+            auto setT = [&t](const char* id, float v) { auto* q = t.state.getParameter(id); q->setValueNotifyingHost(q->convertTo0to1(v)); };
+            juce::AudioBuffer<float> warm(2, 256);
+            juce::MidiBuffer noMidi;
+            auto runBlocks = [&] (int n) { for (int i = 0; i < n; ++i) { warm.clear(); t.processBlock(warm, noMidi); } };
+            auto settle = [&] (int minMs)
+            {
+                for (int i = 0; i < 1500; ++i)
+                {
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+                    if (i * 10 > minMs && ! t.isAnalysing(P::melody) && ! t.isAnalysing(P::drums)) break;
+                }
+            };
+            runBlocks(4);
+            setT("material", 1.0f);                // MELODIC
+            setT("link", 2.0f);                    // GROOVE, straight, no accents: placement is only the tempo match
+            t.applyPreset(0);
+            setT("accent", 0.0f);
+            setT("hold", 2.0f);                    // off: the plucks keep their silence between them
+
+            const std::vector<int> drumHits { 0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60 };
+            check(t.loadFile(writePluckLoop(sr, 92.0, 4, 2, "bounce-bench-pluck92.wav"), P::melody).isEmpty(), tag + "match: a 92 BPM melody loads into a 140 project");
+            check(t.loadFile(writeGridLoop(sr, 140.0, 4, 0.0, drumHits, "bounce-bench-drm140b.wav"), P::drums).isEmpty(), tag + "match: 140 BPM drums load");
+            settle(600);
+            const double ms = t.getSourceBpm(P::melody), ds = t.getSourceBpm(P::drums);
+            bool family = false; for (double m : { 0.5, 1.0, 2.0 }) family |= std::abs(ms / (92.0 * m) - 1.0) < 0.006;
+            check(family, tag + "match: the melody's own tempo is found (" + juce::String(ms, 2) + " BPM)");
+            check(std::abs(ds - 140.0) < 0.01 && ! t.isStretched(P::drums), tag + "match: the drums read 140 and are left alone (" + juce::String(ds, 2) + ")");
+            const auto mel = t.getLoop(P::melody);
+            check(t.isStretched(P::melody) && std::abs(t.getMatchedBpm(P::melody) - 140.0) < 0.01 && mel && std::abs(mel->bpm - 140.0) < 0.01,
+                  tag + "match: the melody is stretched to 140 (its grid: " + juce::String(mel ? mel->bpm : 0.0, 2) + " BPM, " + juce::String(mel ? mel->bars : 0) + " bars)");
+
+            // its notes land on the 140 grid: every pluck within 3 ms of a 16th, all 32 of them
+            auto melodyOnGrid = [&] (double bpm, int& count)
+            {
+                setT("melLevel", 0.0f); setT("drumLevel", -60.0f);
+                th.bpm = bpm;
+                t.prepareToPlay(sr, 256);
+                const auto loop = t.getLoop(P::melody);
+                const auto on = onsets(play(t, th, sr, loop ? loop->bars * 4.0 : 16.0));
+                const double sps = 60.0 / bpm / 4.0 * sr;
+                double worst = 0.0;
+                for (int o : on) worst = std::max(worst, std::abs(o - std::round(o / sps) * sps) / sr * 1000.0);
+                count = (int) on.size();
+                return worst;
+            };
+            int n140 = 0;
+            const double w140 = melodyOnGrid(140.0, n140);
+            // the yardstick: the same melody made at 140 (no stretch). Melodic cuts sit a few ms before a note
+            // on its quietest point, so neither is at 0 ms; the stretched one must be as tight as the real one.
+            double control = 0.0;
+            {
+                EpsilonBounceProcessor c;
+                Head ch; ch.bpm = 140.0;
+                c.setPlayHead(&ch); c.setPlayConfigDetails(0, 2, sr, 256); c.prepareToPlay(sr, 256);
+                auto setC = [&c](const char* id, float v) { auto* q = c.state.getParameter(id); q->setValueNotifyingHost(q->convertTo0to1(v)); };
+                for (int i = 0; i < 4; ++i) { warm.clear(); c.processBlock(warm, noMidi); }
+                setC("material", 1.0f); setC("link", 2.0f); c.applyPreset(0); setC("accent", 0.0f); setC("hold", 2.0f);
+                c.loadFile(writePluckLoop(sr, 140.0, 8, 4, "bounce-bench-pluck140.wav"), P::melody);
+                for (int i = 0; i < 1500 && (c.getLoop(P::melody) == nullptr || c.isAnalysing(P::melody) || i < 30); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+                c.prepareToPlay(sr, 256);
+                const auto on = onsets(play(c, ch, sr, 32.0));
+                const double sps = 60.0 / 140.0 / 4.0 * sr;
+                for (int o : on) control = std::max(control, std::abs(o - std::round(o / sps) * sps) / sr * 1000.0);
+            }
+            check(n140 == 32 && w140 <= control + 1.0, tag + "match: all " + juce::String(n140) + " stretched melody notes on the 140 grid (worst " + juce::String(w140, 2)
+                  + " ms; the same melody made at 140: " + juce::String(control, 2) + " ms)");
+
+            th.bpm = 150.0;                       // the project speeds up: the melody is matched again
+            runBlocks(4);
+            settle(900);
+            check(std::abs(t.getMatchedBpm(P::melody) - 150.0) < 0.01 && std::abs(t.getSourceBpm(P::melody) - ms) < 1e-6,
+                  tag + "match: project at 150 -> the melody is re-stretched to 150, its own tempo unchanged (" + juce::String(t.getMatchedBpm(P::melody), 2) + ")");
+            int n150 = 0;
+            const double w150 = melodyOnGrid(150.0, n150);
+            check(n150 == 32 && w150 <= control + 1.0, tag + "match: at 150 all " + juce::String(n150) + " notes on the 150 grid (worst " + juce::String(w150, 2) + " ms)");
+
+            // 1/2: the same rhythm read at half speed; Fit: slices; Auto
+            t.scaleSourceTempo(P::melody, 0.5);
+            settle(600);
+            check(std::abs(t.getSourceBpm(P::melody) - ms * 0.5) < 0.01 && t.isTempoTyped(P::melody), tag + "match: 1/2 reads the melody at " + juce::String(t.getSourceBpm(P::melody), 2));
+            t.setFit(P::melody, P::Fit::slices);
+            settle(600);
+            check(! t.isStretched(P::melody) && t.getLoop(P::melody) && std::abs(t.getLoop(P::melody)->bpm - ms * 0.5) < 0.01, tag + "match: Fit SLICES plays it on its own grid, re-timed hit by hit");
+            t.setFit(P::melody, P::Fit::automatic);
+            t.setSourceTempo(P::melody, 0.0);
+            settle(600);
+            check(std::abs(t.getSourceBpm(P::melody) - ms) < 0.01 && ! t.isTempoTyped(P::melody) && t.isStretched(P::melody), tag + "match: Auto reads it again (" + juce::String(t.getSourceBpm(P::melody), 2) + ")");
+
+            // the tempo read travels with the session: no re-read, no flip
+            t.setFit(P::drums, P::Fit::stretch);
+            settle(600);
+            juce::MemoryBlock st5;
+            t.getStateInformation(st5);
+            EpsilonBounceProcessor u;
+            Head uh; uh.bpm = 150.0;
+            u.setPlayHead(&uh);
+            u.setPlayConfigDetails(0, 2, sr, 256);
+            u.prepareToPlay(sr, 256);
+            u.setStateInformation(st5.getData(), (int) st5.getSize());
+            for (int i = 0; i < 4; ++i) { warm.clear(); u.processBlock(warm, noMidi); }
+            for (int i = 0; i < 1500 && (! u.getLoop(P::melody) || u.isAnalysing(P::melody) || u.isAnalysing(P::drums) || i < 40); ++i)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            check(std::abs(u.getSourceBpm(P::melody) - ms) < 1e-6 && u.getFit(P::drums) == P::Fit::stretch && u.isStretched(P::melody),
+                  tag + "match: a reopened session keeps each loop's tempo and fit");
+        }
+
         if (sr == 48000.0 && snapDir != juce::File())
         {
             snapDir.createDirectory();
@@ -712,7 +871,7 @@ int main(int argc, char** argv)
                 for (int i = 0; i < 20; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
             }
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
-            ed->setSize(1160, 780);
+            ed->setSize(1160, 840);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(40);
             auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 2.0f);
             juce::PNGImageFormat png;
@@ -723,7 +882,7 @@ int main(int argc, char** argv)
 
             EpsilonBounceProcessor empty;
             std::unique_ptr<juce::AudioProcessorEditor> ed2(empty.createEditor());
-            ed2->setSize(1160, 780);
+            ed2->setSize(1160, 840);
             juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
             auto img2 = ed2->createComponentSnapshot(ed2->getLocalBounds(), true, 2.0f);
             auto file2 = snapDir.getChildFile("epsilon-bounce-empty.png");

@@ -268,6 +268,8 @@ struct AnalysisSettings
     int barsHint = 0;            // 0 = auto
     double tempoHint = 0.0;      // the project's tempo, if known: loops made in it (most are) get an exact grid,
                                  // even with a reverb tail or a few ms of silence at the end
+    double exactBpm = 0.0;       // v1.6: the loop's tempo is known (tempo match): its grid is cut on exactly this
+                                 // tempo, and the bar count is the length in whole bars (a tail rounds down)
     const std::atomic<bool>* cancel = nullptr;   // set by the caller to abandon a run that is out of date
     float sensitivity = 0.5f;    // 0..1, more = more slices
     double prerollMs = 3.0;      // drums: play this much before each detected onset so attacks stay intact
@@ -336,6 +338,25 @@ inline std::shared_ptr<LoopData> analyse(std::vector<float> left, std::vector<fl
                 break;
             }
         }
+    }
+    if (settings.exactBpm > 0.0)
+    {
+        const double barLen = 240.0 / settings.exactBpm * data->sampleRate;
+        int b = settings.barsHint > 0 ? settings.barsHint : 1;
+        if (settings.barsHint <= 0)
+        {
+            // whole bars: a tail rounds down, a loop cut a hair short rounds up; powers of two win close calls
+            const double bars = n / barLen; double bestScore = 1e9;
+            for (int c = 1; c <= 32; ++c)
+            {
+                const double over = bars >= c ? (bars - c) / c * 0.5 : (c - bars) / c * 2.0;
+                const double score = over + ((c & (c - 1)) == 0 ? 0.0 : 0.03);
+                if (score < bestScore) { bestScore = score; b = c; }
+            }
+        }
+        data->bars = b;
+        data->bpm = settings.exactBpm;
+        data->stepSamples = barLen / stepsPerBar;
     }
     auto cancelled = [&settings] { return settings.cancel != nullptr && settings.cancel->load(std::memory_order_relaxed); };
 

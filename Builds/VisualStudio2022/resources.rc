@@ -18,9 +18,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName",  "Epsilon Sounds\0"
       VALUE "FileDescription",  "Epsilon Bounce\0"
-      VALUE "FileVersion",  "1.5.1\0"
+      VALUE "FileVersion",  "1.6.0\0"
       VALUE "ProductName",  "Epsilon Bounce\0"
-      VALUE "ProductVersion",  "1.5.1\0"
+      VALUE "ProductVersion",  "1.6.0\0"
     END
   END
 

@@ -9,9 +9,19 @@
 
 Part of the Epsilon line by **Epsilon Sounds**.
 
-**Manual:** [Epsilon Bounce Manual (PDF)](docs/Epsilon%20Bounce%20Manual.pdf) (v1.5) - the melody and drums lanes, the Pocket switch, every control drawn, all 13 pockets and 42 presets, and tips. The interactive version with the playable Pocket Lab is `docs/manual.html`.
+**Manual:** [Epsilon Bounce Manual (PDF)](docs/Epsilon%20Bounce%20Manual.pdf) (v1.5; the v1.6 tempo step is described below and in the CHANGELOG) - the melody and drums lanes, the Pocket switch, every control drawn, all 13 pockets and 42 presets, and tips. The interactive version with the playable Pocket Lab is `docs/manual.html`.
 
 ![Epsilon Bounce](docs/epsilon-bounce-editor.png)
+
+## Tempo first: 1 Tempo -> 2 Pocket -> 3 Feel (v1.6)
+
+Bounce works in the order a producer would: **first the two loops are brought to one tempo**, then the pocket, then the feel.
+
+1. **Tempo.** Drop a melody and drums, at any tempos. Each lane reads its loop's own tempo from the rhythm (not just the file length) and brings it to your project tempo: melodies are **stretched with their pitch kept**, drums are re-timed hit by hit so they stay punchy. The **TEMPO** strip on each lane shows `92.0 BPM -> 140.0 stretched, pitch kept`. Click the tempo to type it; **½** / **×2** re-read the same rhythm at half or double speed; **Auto** detects it again; **Fit** chooses AUTO, SLICES or STRETCH. Change the project tempo and stretched lanes follow.
+2. **Pocket.** Now that both share one grid: DRUMS LEAD locks the melody into the drums' pocket, MELODY LEADS the other way round, GROOVE puts both on a genre pocket.
+3. **Feel.** Amount, Swing, Tighten, Humanize, Accent, Feel: transient placement, accents and swing on loops that already line up.
+
+A loop is playable the moment it's cut; the stretch is made in the background and swapped in (seconds, even for a 60 s sample).
 
 ## Two lanes: melody + drums (v1.5)
 

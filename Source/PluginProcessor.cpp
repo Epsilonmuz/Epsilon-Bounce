@@ -68,6 +68,7 @@ EpsilonBounceProcessor::EpsilonBounceProcessor()
 EpsilonBounceProcessor::~EpsilonBounceProcessor()
 {
     stopTimer();
+    for (auto& s : slots) s.cancelAnalysis = true;   // a stretch or analysis in flight stops at its next check
     worker.removeAllJobs(true, 4000);
     encoder.removeAllJobs(true, 4000);
 }
@@ -186,6 +187,61 @@ double EpsilonBounceProcessor::analysisTempoHint() const
 {
     const double h = hostBpm.load();
     return pSync->load() >= 0.5f && h >= 40.0 && h <= 300.0 ? h : 0.0;
+}
+
+double EpsilonBounceProcessor::matchTarget() const
+{
+    const double b = playbackBpm();
+    return b >= 40.0 && b <= 300.0 ? b : 0.0;
+}
+
+void EpsilonBounceProcessor::setSourceTempo(int slot, double bpm)
+{
+    slot = juce::jlimit(0, numSlots - 1, slot);
+    auto& s = slots[(size_t) slot];
+    {
+        const juce::ScopedLock sl(loopLock);
+        if (s.rawL.empty()) return;
+        s.srcOverride = bpm > 0.0 ? juce::jlimit(30.0, 300.0, bpm) : 0.0;
+        if (bpm <= 0.0) { s.srcFor = -1; s.srcBpm.store(0.0, std::memory_order_relaxed); }   // detect again
+    }
+    restartAnalysis(slot);
+}
+
+void EpsilonBounceProcessor::restartAnalysis(int slot)
+{
+    auto& s = slots[(size_t) slot];
+    if (! s.analysing.load()) { s.restartPending = false; startAnalysis(slot); return; }
+    s.cancelAnalysis = true;          // the run in flight stops at its next check; the timer starts the new one
+    s.restartPending = true;
+}
+
+void EpsilonBounceProcessor::scaleSourceTempo(int slot, double factor)
+{
+    const double cur = getSourceBpm(slot);
+    if (cur > 0.0) setSourceTempo(slot, cur * factor);
+}
+
+void EpsilonBounceProcessor::setFit(int slot, Fit f)
+{
+    slot = juce::jlimit(0, numSlots - 1, slot);
+    auto& s = slots[(size_t) slot];
+    {
+        const juce::ScopedLock sl(loopLock);
+        if (s.fitMode == (int) f) return;
+        s.fitMode = (int) f;
+        if (s.rawL.empty()) return;
+    }
+    restartAnalysis(slot);
+}
+
+bool EpsilonBounceProcessor::fitUsesStretch(int slot) const
+{
+    int f;
+    { const juce::ScopedLock sl(loopLock); f = slots[(size_t) slot].fitMode; }
+    if (f == (int) Fit::stretch) return true;
+    if (f == (int) Fit::slices) return false;
+    return slot == melody && material() != bounce::Material::drums;
 }
 
 bounce::GrooveTemplate EpsilonBounceProcessor::readLearned() const
@@ -333,7 +389,8 @@ juce::String EpsilonBounceProcessor::loadFile(const juce::File& file, int slot)
     return {};
 }
 
-void EpsilonBounceProcessor::setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name, double madeAtBpm)
+void EpsilonBounceProcessor::setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name, double madeAtBpm,
+                                         double knownSrcBpm, double srcOverride, int fitMode)
 {
     {
         const juce::ScopedLock sl(loopLock);
@@ -341,6 +398,13 @@ void EpsilonBounceProcessor::setRawAudio(int slot, std::vector<float> l, std::ve
         s.rawL = std::move(l); s.rawR = std::move(r); s.rawRate = sr; s.name = name;
         s.madeAtBpm.store(madeAtBpm >= 0.0 ? madeAtBpm : analysisTempoHint(), std::memory_order_relaxed);
         ++s.rawSerial;
+        // a new loop: its tempo is read afresh (a session brings back the one read before, so it never flips)
+        s.srcOverride = srcOverride;
+        s.fitMode = juce::jlimit(0, 2, fitMode);
+        s.srcBpm.store(knownSrcBpm > 0.0 ? knownSrcBpm : 0.0, std::memory_order_relaxed);
+        s.srcFor = knownSrcBpm > 0.0 ? s.rawSerial : -1;
+        s.fitL.clear(); s.fitR.clear(); s.fitKey.clear();
+        s.rematchSince = 0;
     }
     startAnalysis(slot);
     encoder.addJob([this, slot] { encodeFlacCache(slot); });   // ready long before the host's next save
@@ -354,6 +418,9 @@ void EpsilonBounceProcessor::clearSlot(int slot)
         auto& s = slots[(size_t) slot];
         s.rawL.clear(); s.rawR.clear(); s.name.clear();
         s.madeAtBpm.store(0.0, std::memory_order_relaxed);
+        s.srcBpm.store(0.0, std::memory_order_relaxed); s.matchedBpm.store(0.0, std::memory_order_relaxed);
+        s.stretched.store(false, std::memory_order_relaxed);
+        s.srcOverride = 0.0; s.fitMode = 0; s.srcFor = -1; s.fitL.clear(); s.fitR.clear(); s.fitKey.clear();
         s.flacCache.reset(); s.flacFor = -1; ++s.rawSerial;
         s.dragCache.reset(); s.dragCacheKey.clear(); s.dragPendingKey.clear();
     }
@@ -392,11 +459,16 @@ void EpsilonBounceProcessor::startAnalysis(int slot)
 {
     auto& s = slots[(size_t) slot];
     std::vector<float> l, r; double sr; int rawSerial;
+    double override_, knownSrc; int fitMode;
     {
         const juce::ScopedLock sl(loopLock);
         if (s.rawL.empty()) return;
         l = s.rawL; r = s.rawR; sr = s.rawRate; rawSerial = s.rawSerial;
+        override_ = s.srcOverride; fitMode = s.fitMode;
+        knownSrc = s.srcFor == s.rawSerial ? s.srcBpm.load(std::memory_order_relaxed) : 0.0;
     }
+    const double target = matchTarget();
+    const double madeAt = tempoHintFor(slot);
     bounce::AnalysisSettings a;
     if (slot == drums)
     {
@@ -418,7 +490,7 @@ void EpsilonBounceProcessor::startAnalysis(int slot)
     s.analysing = true;
     s.cancelAnalysis = false;
     const bool detect = std::exchange(s.detectOnNextAnalysis, false);
-    worker.addJob([this, slot, rawSerial, l = std::move(l), r = std::move(r), sr, a, detect]() mutable
+    worker.addJob([this, slot, rawSerial, l = std::move(l), r = std::move(r), sr, a, detect, target, madeAt, override_, knownSrc, fitMode]() mutable
     {
         bool switched = false;
         if (detect)
@@ -427,13 +499,97 @@ void EpsilonBounceProcessor::startAnalysis(int slot)
             switched = guess.material != a.material;
             a.material = guess.material;
         }
-        auto data = bounce::analyse(std::move(l), std::move(r), sr, a);
-        juce::MessageManager::callAsync([this, slot, rawSerial, data, detect, switched, m = a.material]
+
+        // ---- Step 1: tempo match ----
+        const int n = (int) l.size();
+        double src = override_ > 0.0 ? override_ : knownSrc;
+        float conf = override_ > 0.0 ? 1.0f : slots[(size_t) slot].tempoConf.load(std::memory_order_relaxed);
+        if (src <= 0.0 && a.barsHint > 0 && n > 0)
+            src = 240.0 * a.barsHint * sr / n;                     // the Bars control says how long the loop is
+        if (src <= 0.0 && n > 0)
+        {
+            const auto g = bounce::estimateTempo(l, r, sr, target > 0.0 ? target : madeAt);
+            src = g.bpm; conf = g.confidence;
+            // Made in this project (1.5.1)? A whole number of bars at the project tempo, and the rhythm agrees
+            // within 2 %: then the project tempo is exact (a tail or a few ms of silence can't pull it off).
+            if (madeAt > 0.0 && src > 0.0)
+            {
+                const double bars = n / (240.0 / madeAt * sr);
+                for (int b : { 1, 2, 4, 8, 16, 32 })
+                    if (bars >= b * 0.985 && bars <= b + std::min(0.5, 0.25 * b))
+                        for (double m : { 0.5, 1.0, 2.0 })
+                            if (std::abs(src / (madeAt * m) - 1.0) < 0.02) { src = madeAt * m; conf = std::max(conf, 0.9f); }
+                if (std::abs(src / madeAt - 2.0) < 1e-9 || std::abs(src / madeAt - 0.5) < 1e-9) src = madeAt;
+            }
+        }
+        const bool stretchFit = fitMode == (int) Fit::stretch
+                             || (fitMode == (int) Fit::automatic && slot == melody && a.material != bounce::Material::drums);
+        const bool needStretch = src > 0.0 && target > 0.0 && stretchFit && std::abs(src / target - 1.0) > 0.002;
+        const juce::String key = juce::String(rawSerial) + "|" + juce::String(src, 4) + "|" + juce::String(target, 4) + "|" + juce::String((int) a.material);
+        std::vector<float> fl, fr;
+        if (needStretch)
+        {
+            const juce::ScopedLock lock(loopLock);
+            auto& sl = slots[(size_t) slot];
+            if (sl.fitKey == key && ! sl.fitL.empty()) { fl = sl.fitL; fr = sl.fitR; }
+        }
+        // Phase 1: the loop cut on its own grid, playable at once (the player re-triggers its pieces on the
+        // project grid while the stretch is made).
+        auto a1 = a;
+        if (src > 0.0) a1.exactBpm = src;
+        auto keepL = needStretch ? l : std::vector<float>(), keepR = needStretch ? r : std::vector<float>();
+        auto data1 = bounce::analyse(std::move(l), std::move(r), sr, a1);
+        const bool cachedStretch = ! fl.empty();
+        if (! (needStretch && cachedStretch) || data1 == nullptr)   // (with the stretch cached, go straight to the stretched loop)
+            postAnalysis(slot, rawSerial, data1, detect, switched, a.material, src, conf, false, src > 0.0 ? src : 0.0, target, ! needStretch || data1 == nullptr);
+        if (! needStretch || data1 == nullptr) return;
+
+        // Phase 2: stretch to the project tempo (pitch kept), cut on the same attacks, so the slices carry over.
+        const double factor = src / target;
+        if (fl.empty())
+        {
+            std::vector<int> cuts;
+            for (const auto& sc : data1->slices) cuts.push_back(sc.onset);   // stretch pieces start on the attacks
+            if (! bounce::stretchLoop(keepL, keepR, factor, sr, a.material, fl, fr, a.cancel, &cuts))
+            {
+                juce::MessageManager::callAsync([this, slot] { slots[(size_t) slot].analysing = false; });
+                return;                                         // out of date: the timer starts the next run
+            }
+            const juce::ScopedLock lock(loopLock);
+            auto& sl = slots[(size_t) slot];
+            if (sl.rawSerial == rawSerial) { sl.fitL = fl; sl.fitR = fr; sl.fitKey = key; }
+        }
+        auto data = bounce::rescaleLoop(*data1, std::move(fl), std::move(fr), factor, target);
+        postAnalysis(slot, rawSerial, data, cachedStretch && detect, switched, a.material, src, conf, true, target, target, true);
+    });
+}
+
+void EpsilonBounceProcessor::postAnalysis(int slot, int rawSerial, std::shared_ptr<bounce::LoopData> data, bool detect, bool switched, bounce::Material m,
+                                          double src, float conf, bool stretched, double matched, double target, bool final)
+{
+        juce::MessageManager::callAsync([this, slot, rawSerial, data, detect, switched, m, src, conf, stretched, matched, target, final]
         {
             auto& sl = slots[(size_t) slot];
             bool current;
             { const juce::ScopedLock lock(loopLock); current = sl.rawSerial == rawSerial && ! sl.rawL.empty(); }
             if (! current) { sl.analysing = false; return; }    // the lane was cleared or reloaded meanwhile
+            if (data != nullptr)
+            {
+                {
+                    const juce::ScopedLock lock(loopLock);
+                    if (sl.srcFor != rawSerial && src > 0.0) { sl.srcFor = rawSerial; }
+                }
+                sl.srcBpm.store(src, std::memory_order_relaxed);
+                sl.tempoConf.store(conf, std::memory_order_relaxed);
+                sl.stretched.store(stretched, std::memory_order_relaxed);
+                sl.matchedBpm.store(matched, std::memory_order_relaxed);
+            }
+            const juce::String lane = slot == melody ? "Melody" : "Drums";
+            const juce::String tempoNote = src <= 0.0 ? juce::String()
+                : ! final ? lane + ": " + juce::String(src, 1) + " BPM, stretching to " + juce::String(target, 1) + " (pitch kept)..."
+                : std::abs(src / juce::jmax(1.0, target) - 1.0) <= 0.002 || target <= 0.0 ? lane + ": " + juce::String(src, 1) + " BPM, already on your tempo"
+                : stretched ? lane + ": " + juce::String(src, 1) + " BPM, stretched to " + juce::String(target, 1) + " (pitch kept)"
+                : lane + ": " + juce::String(src, 1) + " BPM, its hits re-timed to " + juce::String(target, 1);
             if (detect)
             {
                 if (switched)
@@ -445,6 +601,7 @@ void EpsilonBounceProcessor::startAnalysis(int slot)
                     }
                 sl.lastSliceKey = sliceKey(slot);   // this result already uses the detected mode: no second run
                 loadNote = m == bounce::Material::melodic ? "Melody detected: cutting on note and chord changes" : "Drums detected: cutting on hits";
+                if (tempoNote.isNotEmpty()) loadNote = tempoNote + " - " + (m == bounce::Material::melodic ? "cut on note changes" : "cut on hits");
                 ++noteSerial;
             }
             if (data != nullptr) publish(slot, data);   // nullptr: abandoned for newer settings; the timer starts the next run
@@ -452,13 +609,17 @@ void EpsilonBounceProcessor::startAnalysis(int slot)
             {
                 const auto info = getPocketInfo(drums);
                 loadNote = ! info.valid ? "Not enough hits in \"" + info.name + "\" to read a pocket"
-                         : "Drums in: " + juce::String(info.hits) + " hits, " + juce::String(juce::roundToInt(info.swingPercent)) + " % swing"
+                         : (tempoNote.isNotEmpty() ? tempoNote + " - " : juce::String("Drums in: ")) + juce::String(info.hits) + " hits, " + juce::String(juce::roundToInt(info.swingPercent)) + " % swing"
                            + (leaderOf(melody) == drums ? " - melody locked to them" : juce::String());
                 ++noteSerial;
             }
-            sl.analysing = false;
+            else if (data != nullptr && ! detect && tempoNote.isNotEmpty() && slot == melody)
+            {
+                loadNote = tempoNote;
+                ++noteSerial;
+            }
+            if (final) sl.analysing = false;
         });
-    });
 }
 
 void EpsilonBounceProcessor::publish(int slot, std::shared_ptr<const bounce::LoopData> loop)
@@ -508,6 +669,22 @@ void EpsilonBounceProcessor::timerCallback()
             bool have;
             { const juce::ScopedLock sl(loopLock); have = ! s.rawL.empty(); }
             if (have) s.madeAtBpm.store(analysisTempoHint(), std::memory_order_relaxed);
+        }
+        if (s.restartPending.load() && ! s.analysing.load()) { s.restartPending = false; startAnalysis(i); continue; }
+        // Tempo match: a stretched lane follows the project tempo. When the tempo moves (and stays put for
+        // half a second, so a tempo automation ramp doesn't queue up work), the lane is stretched again from
+        // its original audio. Until then the old one keeps playing, re-triggered on the new grid.
+        if (s.stretched.load(std::memory_order_relaxed) || (fitUsesStretch(i) && s.srcBpm.load(std::memory_order_relaxed) > 0.0))
+        {
+            const double t = matchTarget(), m = s.matchedBpm.load(std::memory_order_relaxed);
+            const bool off = t > 0.0 && m > 0.0 && std::abs(t / m - 1.0) > 0.003;
+            if (! off) s.rematchSince = 0;
+            else if (s.rematchSince == 0) s.rematchSince = juce::Time::getMillisecondCounter();
+            else if (juce::Time::getMillisecondCounter() - s.rematchSince > 500 && ! s.analysing.load())
+            {
+                s.rematchSince = 0;
+                startAnalysis(i);
+            }
         }
         // Slicing controls changed: re-analyse (debounced by the 10 Hz timer). A run that is already out of
         // date is abandoned instead of finished, so a knob that is still moving never queues up seconds of work.
@@ -684,8 +861,15 @@ juce::String EpsilonBounceProcessor::learnFromFile(const juce::File& file)
     a.barsHint = barsChoices[juce::jlimit(0, 4, juce::roundToInt(pBars->load()))];
     a.tempoHint = analysisTempoHint();   // your drum loop was most likely bounced at the project tempo
     learning = true;
-    worker.addJob([this, l = std::move(l), r = std::move(r), sr, a, name]() mutable
+    const double target = matchTarget();
+    worker.addJob([this, l = std::move(l), r = std::move(r), sr, a, name, target]() mutable
     {
+        // v1.6: read the reference at its own tempo (a pocket is only right on the right grid)
+        if (a.barsHint <= 0)
+        {
+            const auto g = bounce::estimateTempo(l, r, sr, target);
+            if (g.bpm > 0.0 && (a.tempoHint <= 0.0 || std::abs(g.bpm / a.tempoHint - 1.0) > 0.02)) a.exactBpm = g.bpm;
+        }
         auto ref = bounce::analyse(std::move(l), std::move(r), sr, a);
         const auto res = bounce::learnGroove(*ref);
         juce::MessageManager::callAsync([this, res, name, bpm = ref->bpm]
@@ -759,6 +943,9 @@ void EpsilonBounceProcessor::getStateInformation(juce::MemoryBlock& dest)
         juce::ValueTree audio(i == melody ? "Loop" : "Drums");
         audio.setProperty("name", s.name, nullptr);
         audio.setProperty("madeAtBpm", s.madeAtBpm.load(std::memory_order_relaxed), nullptr);
+        audio.setProperty("srcBpm", s.srcFor == s.rawSerial ? s.srcBpm.load(std::memory_order_relaxed) : 0.0, nullptr);   // v1.6
+        audio.setProperty("srcTyped", s.srcOverride, nullptr);
+        audio.setProperty("fit", s.fitMode, nullptr);
         audio.setProperty("flac", juce::var(s.flacCache), nullptr);
         tree.appendChild(audio, nullptr);
     }
@@ -820,8 +1007,11 @@ void EpsilonBounceProcessor::setStateInformation(const void* data, int size)
                 r->read(&buf, 0, n, 0, true, true);
                 // 1.5.0 and older sessions don't know the made-at tempo: 0 = take the project tempo once it is known.
                 const double madeAt = audio.hasProperty("madeAtBpm") ? (double) audio.getProperty("madeAtBpm") : 0.0;
+                // 1.6: the tempo read when it was loaded (so it never flips), a typed tempo, and the fit mode.
+                // Older sessions: read again on load.
                 setRawAudio(i, { buf.getReadPointer(0), buf.getReadPointer(0) + n }, { buf.getReadPointer(1), buf.getReadPointer(1) + n },
-                            r->sampleRate, audio.getProperty("name").toString(), madeAt);
+                            r->sampleRate, audio.getProperty("name").toString(), madeAt,
+                            (double) audio.getProperty("srcBpm", 0.0), (double) audio.getProperty("srcTyped", 0.0), (int) audio.getProperty("fit", 0));
                 const juce::ScopedLock sl(loopLock);
                 slots[(size_t) i].flacCache = *mb;              // the session already holds it encoded
                 slots[(size_t) i].flacFor = slots[(size_t) i].rawSerial;

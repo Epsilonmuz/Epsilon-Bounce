@@ -201,6 +201,111 @@ void GrooveGrid::paint(juce::Graphics& g)
 }
 
 //==============================================================================
+// TempoStrip: step 1, tempo match
+
+TempoStrip::TempoStrip(EpsilonBounceProcessor& p, int slotIndex, const epsilon_ui::Palette& palette)
+    : proc(p), slot(slotIndex), pal(palette)
+{
+    bpmLabel.setEditable(true, true, false);
+    bpmLabel.setJustificationType(juce::Justification::centred);
+    bpmLabel.setFont(valueFont());
+    bpmLabel.setColour(juce::Label::textColourId, pal.ink);
+    bpmLabel.setColour(juce::Label::backgroundColourId, pal.raised);
+    bpmLabel.setColour(juce::Label::outlineColourId, pal.line);
+    bpmLabel.setColour(juce::Label::textWhenEditingColourId, pal.ink);
+    bpmLabel.setColour(juce::TextEditor::backgroundColourId, pal.surface);
+    bpmLabel.setColour(juce::TextEditor::textColourId, pal.ink);
+    bpmLabel.setColour(juce::TextEditor::highlightColourId, pal.live.withAlpha(0.35f));
+    bpmLabel.setTooltip("This loop's own tempo. Click to type the real tempo if you know it (e.g. from the file name).");
+    bpmLabel.onEditorShow = [this] { if (auto* ed = bpmLabel.getCurrentTextEditor()) { ed->setInputRestrictions(6, "0123456789."); ed->setJustification(juce::Justification::centred); } };
+    bpmLabel.onTextChange = [this]
+    {
+        const double v = bpmLabel.getText().retainCharacters("0123456789.").getDoubleValue();
+        if (v >= 30.0 && v <= 300.0) proc.setSourceTempo(slot, v);
+        shownSrc = -2.0;   // redraw from the processor
+    };
+    addAndMakeVisible(bpmLabel);
+    for (auto* b : { &half, &dbl, &autoButton, &fitButton }) addAndMakeVisible(b);
+    half.setTooltip("Read it as half the tempo (the same rhythm in half-time)");
+    dbl.setTooltip("Read it as double the tempo");
+    autoButton.setTooltip("Detect the tempo again");
+    fitButton.setTooltip("How the loop reaches your tempo. AUTO: melodies are stretched (pitch kept), drums are re-timed hit by hit so they stay punchy. "
+                         "SLICES: always re-time hit by hit. STRETCH: always stretch (for samples with long notes over drums).");
+    half.onClick = [this] { proc.scaleSourceTempo(slot, 0.5); };
+    dbl.onClick = [this] { proc.scaleSourceTempo(slot, 2.0); };
+    autoButton.onClick = [this] { proc.setSourceTempo(slot, 0.0); };
+    fitButton.onClick = [this]
+    {
+        const int next = ((int) proc.getFit(slot) + 1) % 3;
+        proc.setFit(slot, (EpsilonBounceProcessor::Fit) next);
+    };
+    setTooltip("Step 1: tempo match. Each loop's own tempo is found and brought to your project tempo, so both lanes share one grid before the pocket and groove are applied.");
+}
+
+void TempoStrip::refresh()
+{
+    const bool have = proc.getLoop(slot) != nullptr;
+    const double src = proc.getSourceBpm(slot), matched = proc.getMatchedBpm(slot), target = proc.playbackBpm();
+    const bool busy = proc.isAnalysing(slot), str = proc.isStretched(slot);
+    const int fit = (int) proc.getFit(slot);
+    if (have == shownHave && src == shownSrc && matched == shownMatched && std::abs(target - shownTarget) < 0.05 && busy == shownBusy && str == shownStretched && fit == shownFit) return;
+    shownHave = have; shownSrc = src; shownMatched = matched; shownTarget = target; shownBusy = busy; shownStretched = str; shownFit = fit;
+
+    for (auto* c : std::initializer_list<juce::Component*> { &bpmLabel, &half, &dbl, &autoButton, &fitButton }) c->setEnabled(have);
+    if (! bpmLabel.isBeingEdited()) bpmLabel.setText(have && src > 0.0 ? juce::String(src, 1) + " BPM" : juce::String("--"), juce::dontSendNotification);
+    fitButton.setButtonText(fit == 1 ? "Fit: slices" : fit == 2 ? "Fit: stretch" : (proc.fitUsesStretch(slot) ? "Fit: auto (stretch)" : "Fit: auto (slices)"));
+    const bool onTempo = src > 0.0 && target > 0.0 && std::abs(src / target - 1.0) <= 0.002;
+    const juce::String arrow = juce::String(juce::CharPointer_UTF8("\xe2\x86\x92 "));
+    live = false;
+    if (! have) status = slot == EpsilonBounceProcessor::melody ? "Drop a melody or sample: its tempo is matched first" : "Drop drums: their tempo is matched first";
+    else if (busy && src <= 0.0) status = "Reading the tempo...";
+    else if (busy) status = arrow + juce::String(target, 1) + "  matching...";
+    else if (src <= 0.0) status = "Tempo not found - type it, or set Bars";
+    else if (onTempo) { status = arrow + juce::String(target, 1) + "  already on your tempo"; live = true; }
+    else if (str) { status = arrow + juce::String(matched, 1) + "  stretched, pitch kept"; live = std::abs(matched / target - 1.0) <= 0.003; }
+    else { status = arrow + juce::String(target, 1) + "  hits re-timed to your tempo"; live = true; }
+    repaint();
+}
+
+void TempoStrip::paint(juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour(pal.surface);
+    g.fillRoundedRectangle(r, 5.0f);
+    // the step number: "1 TEMPO"
+    auto tag = r.removeFromLeft(78.0f).reduced(4.0f, 3.0f);
+    g.setColour(live ? pal.live : pal.raised);
+    g.fillEllipse(tag.removeFromLeft(tag.getHeight()));
+    g.setColour(live ? pal.liveInk : pal.inkMuted);
+    g.setFont(font(Weight::Bold, 11.0f));
+    const auto circle = juce::Rectangle<float>(r.getX() - 78.0f + 4.0f, r.getY() + 3.0f, r.getHeight() - 6.0f, r.getHeight() - 6.0f);
+    g.drawText("1", circle, juce::Justification::centred);
+    g.setColour(pal.inkMuted);
+    g.setFont(sectionLabel());
+    g.drawText("TEMPO", tag.withTrimmedLeft(6.0f), juce::Justification::centredLeft);
+    g.setFont(caption());
+    g.setColour(live ? pal.ink : pal.inkMuted);
+    g.drawText(status, statusArea, juce::Justification::centredLeft, true);
+}
+
+void TempoStrip::resized()
+{
+    auto r = getLocalBounds().reduced(2, 2);
+    r.removeFromLeft(78);
+    bpmLabel.setBounds(r.removeFromLeft(86));
+    r.removeFromLeft(6);
+    fitButton.setBounds(r.removeFromRight(124));
+    r.removeFromRight(4);
+    autoButton.setBounds(r.removeFromRight(46));
+    r.removeFromRight(4);
+    dbl.setBounds(r.removeFromRight(30));
+    r.removeFromRight(2);
+    half.setBounds(r.removeFromRight(30));
+    r.removeFromRight(6);
+    statusArea = r;
+}
+
+//==============================================================================
 // A button you drag: rendering happens when the drag starts.
 namespace
 {
@@ -315,6 +420,8 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
     drumGrid.setOpaque(true);
     addAndMakeVisible(grid);
     addAndMakeVisible(drumGrid);
+    addAndMakeVisible(melTempo);
+    addAndMakeVisible(drumTempo);
     learnButton.onFileDropped = [this](const juce::File& f) { load(f, EpsilonBounceProcessor::drums); };
     grooveSwitch.setRows(3);
     grooveSwitch.setTooltip("The pocket both lanes ride when Pocket is on GROOVE, or when only one lane is loaded. Dimmed while one lane leads the other.");
@@ -330,9 +437,9 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
     syncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.state, "sync", syncButton);
 
     setResizable(true, true);
-    setResizeLimits(1160 * 3 / 4, 780 * 3 / 4, 1160 * 2, 780 * 2);
-    getConstrainer()->setFixedAspectRatio(1160.0 / 780.0);
-    setSize(1160, 780);
+    setResizeLimits(1160 * 3 / 4, 840 * 3 / 4, 1160 * 2, 840 * 2);
+    getConstrainer()->setFixedAspectRatio(1160.0 / 840.0);
+    setSize(1160, 840);
     startTimerHz(30);
 }
 
@@ -380,6 +487,8 @@ void EpsilonBounceEditor::timerCallback()
 {
     grid.refresh(false);
     drumGrid.refresh(false);
+    melTempo.refresh();
+    drumTempo.refresh();
     {
         const bool haveMel = proc.getLoop(EpsilonBounceProcessor::melody) != nullptr, haveDrum = proc.getLoop(EpsilonBounceProcessor::drums) != nullptr;
         for (auto* c : std::initializer_list<juce::Component*> { dragMel.get(), &clearMel }) if (c->isEnabled() != haveMel) c->setEnabled(haveMel);
@@ -421,8 +530,8 @@ void EpsilonBounceEditor::paint(juce::Graphics& g)
 {
     const auto& pal = look.colours();
     g.fillAll(pal.bg);
-    drawPanel(g, heroPanel.toFloat(), pal, "Pocket");
-    drawPanel(g, feelPanel.toFloat(), pal, "Feel");
+    drawPanel(g, heroPanel.toFloat(), pal, "2  Pocket");
+    drawPanel(g, feelPanel.toFloat(), pal, "3  Feel");
     // section labels: the Hallmark's floating bar + spaced caps
     drawSectionLabel(g, { (float) slicePanel.getX(), (float) slicePanel.getY() + 7.0f }, "Slicing", pal);
     drawSectionLabel(g, { (float) barsLabel.getX(), (float) barsLabel.getCentreY() }, "Bars", pal);
@@ -477,7 +586,7 @@ void EpsilonBounceEditor::resized()
     auto titleRow = h.removeFromTop(30);
     materialSwitch.setBounds(titleRow.removeFromRight(250).withTrimmedTop(2));
     cutLabel = titleRow.removeFromRight(70).withTrimmedRight(size::space2);
-    titleRow.removeFromLeft(80);                                   // panel title
+    titleRow.removeFromLeft(100);                                  // panel title
     linkSwitch.setBounds(titleRow.removeFromLeft(juce::jmin(330, titleRow.getWidth() - 8)).withTrimmedTop(2));
     h.removeFromTop(4);
     auto sliceRow = h.removeFromBottom(112);
@@ -485,18 +594,20 @@ void EpsilonBounceEditor::resized()
     h.removeFromBottom(size::space3);
     // two lanes, each with its own Drag out / Level / Clear column
     const int laneH = (h.getHeight() - size::space2) / 2;
-    const auto lane = [](juce::Rectangle<int> area, GrooveGrid& gg, juce::TextButton* drag, epsilon_ui::Knob& level, juce::TextButton& clear)
+    const auto lane = [](juce::Rectangle<int> area, GrooveGrid& gg, TempoStrip& ts, juce::TextButton* drag, epsilon_ui::Knob& level, juce::TextButton& clear)
     {
         auto col = area.removeFromRight(84);
         area.removeFromRight(size::space2);
+        ts.setBounds(area.removeFromTop(28));
+        area.removeFromTop(3);
         gg.setBounds(area);
         drag->setBounds(col.removeFromTop(26));
         clear.setBounds(col.removeFromBottom(24));
         level.setBounds(col.reduced(4, 2));
     };
-    lane(h.removeFromTop(laneH), grid, dragMel.get(), melLevel, clearMel);
+    lane(h.removeFromTop(laneH), grid, melTempo, dragMel.get(), melLevel, clearMel);
     h.removeFromTop(size::space2);
-    lane(h, drumGrid, dragDrum.get(), drumLevel, clearDrum);
+    lane(h, drumGrid, drumTempo, dragDrum.get(), drumLevel, clearDrum);
 
     slicePanel = sliceRow;
     auto sr = sliceRow.withTrimmedTop(16);

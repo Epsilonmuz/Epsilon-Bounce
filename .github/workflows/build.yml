@@ -32,7 +32,7 @@ jobs:
         run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DBOUNCE_BUILD_BENCH=ON
 
       - name: Build VST3, AU, Standalone, tests and host bench
-        run: cmake --build build --config Release --target EpsilonBounce_VST3 EpsilonBounce_AU EpsilonBounce_Standalone BounceEngineTests BounceBench -- -quiet
+        run: cmake --build build --config Release --target EpsilonBounce_VST3 EpsilonBounce_AU EpsilonBounce_Standalone BounceEngineTests BounceTempoTests BounceBench -- -quiet
 
       - name: Engine tests (44.1 / 48 kHz, timing, speed)
         run: (cd build && ctest -C Release --output-on-failure)

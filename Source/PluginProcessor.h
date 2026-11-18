@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "BounceEngine.h"
+#include "TempoMatch.h"
 #include "Presets.h"
 
 class EpsilonBounceProcessor : public juce::AudioProcessor, private juce::Timer
@@ -44,7 +45,7 @@ public:
     bounce::GrooveSettings currentGroove() const;           // the melody lane's groove
     bounce::GrooveSettings grooveFor(int slot) const;       // what this lane actually plays with (link resolved)
     double playbackBpm() const;                             // host tempo if known, else internal tempo
-    bool isAnalysing(int slot = melody) const { return slots[(size_t) slot].analysing.load(); }
+    bool isAnalysing(int slot = melody) const { return slots[(size_t) slot].analysing.load() || slots[(size_t) slot].restartPending.load(); }
     int getPlayingSlice(int slot = melody) const { return slots[(size_t) slot].playingSlice.load(std::memory_order_relaxed); }
     Link link() const;
     bool haveBoth() const;                                  // both lanes hold a loop
@@ -60,6 +61,22 @@ public:
     float getCpuPercent() const { return cpu.load(); }
     double timeFactor() const;                              // 0.5 half-time, 1, 2 double-time
     double gridBpm() const { return playbackBpm() * timeFactor(); }   // tempo of the loop's own grid
+
+    // Tempo match (v1.6): step 1, before any groove. Each lane's own tempo is found on load (or typed),
+    // and the lane is brought to the project tempo: melodies are stretched with their pitch kept, drums
+    // are re-triggered slice by slice (their hits stay punchy). Then the pocket and groove tools work on
+    // two loops that already share one grid.
+    enum class Fit { automatic = 0, slices, stretch };
+    double getSourceBpm(int slot) const { return slots[(size_t) slot].srcBpm.load(std::memory_order_relaxed); }      // the loop's own tempo, 0 = not known yet
+    double getMatchedBpm(int slot) const { return slots[(size_t) slot].matchedBpm.load(std::memory_order_relaxed); }  // the tempo its grid is on now
+    bool isStretched(int slot) const { return slots[(size_t) slot].stretched.load(std::memory_order_relaxed); }
+    bool isTempoTyped(int slot) const { const juce::ScopedLock sl(loopLock); return slots[(size_t) slot].srcOverride > 0.0; }
+    float getTempoConfidence(int slot) const { return slots[(size_t) slot].tempoConf.load(std::memory_order_relaxed); }
+    void setSourceTempo(int slot, double bpm);              // the loop's real tempo (0 = detect again)
+    void scaleSourceTempo(int slot, double factor);         // x2 / x0.5: the same rhythm, read at double or half speed
+    Fit getFit(int slot) const { const juce::ScopedLock sl(loopLock); return (Fit) slots[(size_t) slot].fitMode; }
+    void setFit(int slot, Fit f);
+    bool fitUsesStretch(int slot) const;                    // what AUTO resolves to for this lane
 
     // Presets (message thread)
     void applyPreset(int index);
@@ -104,6 +121,17 @@ private:
         std::atomic<double> madeAtBpm { 0.0 };
         juce::MemoryBlock dragCache;                          // guarded by loopLock
         juce::String dragCacheKey, dragPendingKey;            // guarded by loopLock
+        // tempo match (v1.6)
+        std::atomic<double> srcBpm { 0.0 }, matchedBpm { 0.0 };
+        std::atomic<bool> stretched { false };
+        std::atomic<float> tempoConf { 0.0f };
+        double srcOverride = 0.0;                             // guarded by loopLock: typed tempo, 0 = detected
+        int fitMode = 0;                                      // guarded by loopLock: Fit
+        int srcFor = -1;                                      // guarded by loopLock: the raw audio srcBpm was detected on
+        std::vector<float> fitL, fitR;                        // guarded by loopLock: the stretched audio, reused while
+        juce::String fitKey;                                  //   only slicing controls change
+        juce::uint32 rematchSince = 0;                        // message thread: when the project tempo moved off the match
+        std::atomic<bool> restartPending { false };           // a tempo / fit change waits for the run in flight to stop
         // this loop's own pocket (microtiming + accents), readable from the audio thread without locks
         std::array<std::atomic<float>, bounce::stepsPerBar * 2> pocket {};
         std::atomic<bool> pocketValid { false };
@@ -152,9 +180,15 @@ private:
     std::atomic<float>* pShift; std::atomic<float>* pAlign;
     std::atomic<float>* pLink; std::atomic<float>* pMelLevel; std::atomic<float>* pDrumLevel;
 
-    void setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name, double madeAtBpm = -1.0);
+    void setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name, double madeAtBpm = -1.0,
+                     double knownSrcBpm = 0.0, double srcOverride = 0.0, int fitMode = 0);
+    double matchTarget() const;                              // the tempo both lanes are brought to
+    void restartAnalysis(int slot);                          // re-run now, or as soon as the run in flight has stopped
     void startAnalysis(int slot);
     void publish(int slot, std::shared_ptr<const bounce::LoopData> loop);
+    // hands an analysis result to the message thread (final = the lane's analysis is done)
+    void postAnalysis(int slot, int rawSerial, std::shared_ptr<bounce::LoopData> data, bool detect, bool switched, bounce::Material m,
+                      double src, float conf, bool stretched, double matched, double target, bool final);
     void timerCallback() override;                           // frees retired loops, re-analyses on slicing changes
     bounce::GrooveSettings readGroove() const;
 

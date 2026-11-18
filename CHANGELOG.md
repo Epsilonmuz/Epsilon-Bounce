@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.6.0 · "Tempo first" (2026-11-18)
+
+Built on 1.5.1. Plugin codes, parameter IDs and sessions are unchanged: 1.5 sessions open as before, and their loops' tempos are read once on load.
+
+**Step 1 is now tempo match: the two loops are brought to one tempo before any groove work**
+- Each lane reads its loop's own tempo from the rhythm (onset autocorrelation), not just from the file length, so a sample cut a little long or short, a flip that starts mid-bar, or a loop with a reverb tail still reads right. When the length is a whole number of bars at that tempo, the exact tempo is used.
+- Of the equivalent readings (70 / 140 / 280), the one nearest the project tempo wins, so a half-time loop is never stretched to double length. A loop made at the project tempo keeps it exactly, as in 1.5.1.
+- Melodies are **stretched to the project tempo with their pitch kept**: a phase vocoder with identity phase locking, one shared phase rotation for both channels (the stereo image stays put), cut into pieces on the loop's own attacks so each attack lands exactly where it belongs, and the first 12 ms of every attack copied untouched (no soft, late hits).
+- Drums keep being re-timed hit by hit (the punchiest way to change a drum loop's tempo); a loop's slices are on its own grid and land on the project's.
+- The loop is playable as soon as it's cut; the stretch is made in the background and replaces it (a 59 s sample: playable in 1.7 s, stretched in 4.9 s on the Linux test bench).
+- When the project tempo changes (and stays put for half a second), a stretched lane is stretched again from its original audio.
+- New **TEMPO** strip on each lane: the loop's tempo -> your tempo and what was done. Click the tempo to type it, **½** / **×2** re-read the same rhythm at half or double speed, **Auto** detects it again. **Fit**: AUTO (melodies stretched, drums re-timed), SLICES or STRETCH.
+- The panels are numbered for the flow: **1 Tempo -> 2 Pocket -> 3 Feel**. The window is 1160 x 840.
+- Learn groove reads a reference loop at its own tempo too (a pocket is only right on the right grid).
+- The tempo read, a typed tempo and the Fit mode are saved in the session, so a loop never flips between readings when a project reopens.
+- Fix: closing the plugin while a long analysis is running no longer waits for it (the run is told to stop).
+
+**Tests**
+- New `BounceTempoTests` (78 checks): tempo found for drum loops at 72-174 BPM and melodies at 80-140 BPM, with tails and odd cuts; stretch keeps exact length, pitch (440 Hz stays 440 Hz), level and stereo image; 90 -> 140 drums: hits within 1 ms of the grid and attacks within 0.7 ms; a 92 BPM melody into 140: every cut note within 0.4 ms, attacks within 3 ms.
+- 12 new host-bench checks per sample rate: a 92 BPM melody and 140 BPM drums in a 140 project (melody found, stretched, all 32 notes as tight on the grid as the same melody made at 140), the project moved to 150 (re-stretched), ½, Fit SLICES, Auto, and a session reopened with each loop's tempo and fit. All 157 bench checks pass.
+
 ## 1.5.1 · "Tempo-proof" (2026-11-17)
 
 Fix. Plugin codes, parameter IDs and sessions are unchanged.

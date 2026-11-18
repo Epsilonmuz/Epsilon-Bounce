@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="EBnc01" name="Epsilon Bounce" projectType="audioplug" version="1.5.1"
+<JUCERPROJECT id="EBnc01" name="Epsilon Bounce" projectType="audioplug" version="1.6.0"
               companyName="Epsilon Sounds" bundleIdentifier="com.epsilonsounds.bounce"
               pluginName="Epsilon Bounce" pluginDesc="Re-grooves audio loops to dembow, drill and trap pockets"
               pluginManufacturer="Epsilon Sounds" pluginManufacturerCode="EpsS"
@@ -12,6 +12,7 @@
   <MAINGROUP id="EBmain" name="Epsilon Bounce">
     <GROUP id="EBg0" name="Source">
       <FILE id="EBf000" name="BounceEngine.h" compile="0" resource="0" file="Source/BounceEngine.h"/>
+      <FILE id="EBf016" name="TempoMatch.h" compile="0" resource="0" file="Source/TempoMatch.h"/>
       <FILE id="EBf100" name="Presets.h" compile="0" resource="0" file="Source/Presets.h"/>
       <FILE id="EBf001" name="PluginProcessor.cpp" compile="1" resource="0"
             file="Source/PluginProcessor.cpp"/>

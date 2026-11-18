@@ -37,6 +37,33 @@ private:
     void renderCache();
 };
 
+// Step 1 of the flow (v1.6), one per lane: the loop's own tempo -> the project tempo.
+// "92.0 BPM -> 140.0  stretched, pitch kept". Click the tempo to type it; 1/2 and x2 re-read the same
+// rhythm at half or double speed; Auto reads it again. Fit: AUTO (melody stretched, drums re-timed hit by
+// hit), SLICES or STRETCH.
+class TempoStrip : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    TempoStrip(EpsilonBounceProcessor& p, int slotIndex, const epsilon_ui::Palette& pal);
+    void refresh();
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+private:
+    EpsilonBounceProcessor& proc;
+    int slot;
+    const epsilon_ui::Palette& pal;
+    juce::Label bpmLabel;
+    juce::TextButton half { juce::String(juce::CharPointer_UTF8("\xc2\xbd")) }, dbl { juce::String(juce::CharPointer_UTF8("\xc3\x97" "2")) },
+                     autoButton { "Auto" }, fitButton { "Fit: auto" };
+    juce::Rectangle<int> statusArea;
+    juce::String status;
+    bool live = false;           // the lane is in step with the project tempo
+    double shownSrc = -2.0, shownMatched = -2.0, shownTarget = -2.0;
+    bool shownBusy = false, shownStretched = false, shownHave = false;
+    int shownFit = -1;
+};
+
 // "Load drums": click to choose your drum loop, or drop it straight onto the button.
 struct DropButton : juce::TextButton, juce::FileDragAndDropTarget
 {
@@ -78,6 +105,7 @@ private:
     juce::TextButton prevPreset { "<" }, nextPreset { ">" };
     juce::ComboBox presetBox;
     GrooveGrid grid { proc, EpsilonBounceProcessor::melody }, drumGrid { proc, EpsilonBounceProcessor::drums };
+    TempoStrip melTempo { proc, EpsilonBounceProcessor::melody, look.colours() }, drumTempo { proc, EpsilonBounceProcessor::drums, look.colours() };
     epsilon_ui::ModeSwitch grooveSwitch { proc.state, "groove" };
     epsilon_ui::ModeSwitch timeSwitch { proc.state, "time" };
     epsilon_ui::ModeSwitch materialSwitch { proc.state, "material" };
