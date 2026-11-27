@@ -9,6 +9,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "PocketMaterial.h"
 #include <ctime>
 
 namespace
@@ -74,6 +75,18 @@ juce::File writeGridLoop(double sr, double bpm, int bars, double tailBars, const
     juce::WavAudioFormat wav;
     std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(f.createOutputStream().release(), sr, 2, 24, {}, 0));
     w->writeFromAudioSampleBuffer(b, 0, len);
+    return f;
+}
+
+juce::File writeVec(const char* name, const std::vector<float>& l, const std::vector<float>& r, double sr)
+{
+    juce::AudioBuffer<float> b(2, (int) l.size());
+    for (int i = 0; i < (int) l.size(); ++i) { b.setSample(0, i, l[(size_t) i]); b.setSample(1, i, r[(size_t) i]); }
+    auto f = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile(name);
+    f.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(f.createOutputStream().release(), sr, 2, 24, {}, 0));
+    w->writeFromAudioSampleBuffer(b, 0, b.getNumSamples());
     return f;
 }
 
@@ -854,6 +867,106 @@ int main(int argc, char** argv)
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
             check(std::abs(u.getSourceBpm(P::melody) - ms) < 1e-6 && u.getFit(P::drums) == P::Fit::stretch && u.isStretched(P::melody),
                   tag + "match: a reopened session keeps each loop's tempo and fit");
+        }
+
+        // ---- v2.0: Pocket Engine, through the real plugin: a dead-on-the-grid melody (plucks, pads, a triplet
+        // figure) locked to trap drums with a late snare, swung hats and a triplet roll
+        {
+            using P = EpsilonBounceProcessor;
+            pocket_material::sr = sr;
+            std::vector<float> dl, dr, ml, mr;
+            pocket_material::makeDrums(2, dl, dr);
+            pocket_material::makeMelody(2, ml, mr);
+            const auto df = writeVec("bounce-bench-v2-drums.wav", dl, dr, sr), mf = writeVec("bounce-bench-v2-melody.wav", ml, mr, sr);
+            EpsilonBounceProcessor v;
+            Head vh;
+            v.setPlayHead(&vh);
+            v.setPlayConfigDetails(0, 2, sr, 256);
+            v.prepareToPlay(sr, 256);
+            juce::AudioBuffer<float> warm(2, 256); juce::MidiBuffer noMidi;
+            for (int i = 0; i < 4; ++i) { warm.clear(); v.processBlock(warm, noMidi); }   // the host tempo is known first
+            auto settle = [&v](int maxTicks, auto done) { for (int i = 0; i < maxTicks && ! done(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10); return done(); };
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            check(v.loadFile(mf, P::melody).isEmpty() && v.loadFile(df, P::drums).isEmpty(), tag + "v2: both lanes load");
+            const bool locked = settle(1500, [&] { return v.getLoop(P::melody) && v.getLoop(P::drums) && ! v.isAnalysing(P::melody) && ! v.isAnalysing(P::drums) && v.getPocketStatus(P::melody).active; });
+            check(locked, tag + "v2: melody locked by the 2.0 engine " + juce::String(msSince(t0), 0) + " ms after loading");
+            check(v.material() == bounce::Material::melodic, tag + "v2: melody detected as melodic");
+            const auto st = v.getPocketStatus(P::melody);
+            check(st.report.tripletNotes == 4, tag + "v2: the triplet figure is kept as triplets (" + juce::String(st.report.tripletNotes) + " notes)");
+            check(st.report.leaderTripletBeats >= 2, tag + "v2: the drums' triplet roll is read as triplets");
+
+            // what the engine promises, computed from the loops the plugin holds...
+            const auto mel = v.getLoop(P::melody), dru = v.getLoop(P::drums);
+            const auto mmono = bounce::pocket::monoOf(*mel);
+            const auto notes = bounce::pocket::superFlux(mmono, sr, 0.5f, true);
+            const auto map = bounce::pocket::buildMap(bounce::pocket::notesFromSlices(*dru, bounce::pocket::monoOf(*dru), true), bounce::pocket::gridOf(*dru));
+            const auto moves = bounce::pocket::placeNotes(notes, bounce::pocket::gridOf(*mel), map, {});
+            // ...and what the host hears: the melody alone, two loops
+            auto setParam = [&v](const char* id, float plain) { auto* q = v.state.getParameter(id); q->setValueNotifyingHost(q->convertTo0to1(plain)); };
+            setParam("drumLevel", -60.0f);
+            setParam("accent", 0.0f);                         // timing only (Accent changes levels, not places)
+            v.prepareToPlay(sr, 256);
+            auto out = play(v, vh, sr, 16.0);
+            std::vector<float> om((size_t) out.getNumSamples());
+            for (int i = 0; i < out.getNumSamples(); ++i) om[(size_t) i] = 0.5f * (out.getSample(0, i) + out.getSample(1, i));
+            const auto heardOut = bounce::pocket::superFlux(om, sr, 0.5f, false);
+            double worst = 0.0;
+            for (int rep = 0; rep < 2; ++rep)
+                for (const auto& mvv : moves)
+                {
+                    const double want = mvv.dst + rep * (double) mel->bars * 16 * mel->samplesPerStep();
+                    if (want > out.getNumSamples() - 0.05 * sr) continue;
+                    double best = 1e9; for (const auto& n : heardOut) best = std::min(best, std::abs(n.at - want));
+                    if (best / sr * 1000.0 > 3.0 && std::getenv("BOUNCE_V2_DEBUG")) std::printf("   note src %.1f want %.1f ms: nearest %.1f ms off\n", mvv.src / sr * 1000.0, want / sr * 1000.0, best / sr * 1000.0);
+                    worst = std::max(worst, best / sr * 1000.0);
+                }
+            check(worst < 3.0 && ! moves.empty(), tag + "v2: host playback puts every note where the pocket says, worst " + juce::String(worst, 2) + " ms over 2 loops");
+            // gaps: the warp never stops the sound between notes (pads and plucks overlap in this melody)
+            float minRms = 1.0f;
+            const int win = (int) (0.015 * sr);
+            for (int i = (int) (0.01 * sr); i + win < (int) (2 * mel->bars * 16 * mel->samplesPerStep()) - win; i += win) minRms = juce::jmin(minRms, out.getRMSLevel(0, i, win));
+            check(minRms > 0.01f, tag + "v2: no gaps in the locked melody (quietest 15 ms RMS " + juce::String(minRms, 3) + ")");
+            setParam("drumLevel", 0.0f);
+            setParam("accent", 75.0f);
+
+            // drag-out carries the lock
+            const auto f = v.renderToFile(2, P::melody);
+            check(f.existsAsFile() && f.getFileName().containsIgnoreCase("locked to"), tag + "v2: drag-out \"" + f.getFileName() + "\"");
+            f.deleteFile();
+            // Depth 0: re-made, notes on the lattice (heard)
+            setParam("depth", 0.0f);
+            const int ps0 = v.getPlaySerial(P::melody);
+            check(settle(600, [&] { return v.getPlaySerial(P::melody) != ps0 && v.getPocketStatus(P::melody).active; }), tag + "v2: Depth change re-locks in the background");
+            check(v.getPocketStatus(P::melody).report.meanMoveMs < st.report.meanMoveMs + 30.0, tag + "v2: Depth 0 lock made (mean move " + juce::String(v.getPocketStatus(P::melody).report.meanMoveMs, 1) + " ms)");
+            setParam("depth", 100.0f);
+            settle(600, [&] { return v.getPocketStatus(P::melody).active && ! v.getPocketStatus(P::melody).busy; });
+            // SLICES = the 1.x lock
+            setParam("engine", 1.0f);
+            check(! v.getPocketStatus(P::melody).active && v.leaderOf(P::melody) == P::drums, tag + "v2: ENGINE SLICES falls back to the 1.x lock");
+            setParam("engine", 0.0f);
+            check(v.getPocketStatus(P::melody).active, tag + "v2: ENGINE WARP is back at once (the lock was kept)");
+            // the session brings it back
+            juce::MemoryBlock sst;
+            v.getStateInformation(sst);
+            EpsilonBounceProcessor w;
+            Head wh; w.setPlayHead(&wh);
+            w.setPlayConfigDetails(0, 2, sr, 256);
+            w.prepareToPlay(sr, 256);
+            for (int i = 0; i < 4; ++i) { warm.clear(); w.processBlock(warm, noMidi); }
+            w.setStateInformation(sst.getData(), (int) sst.getSize());
+            const bool back = settle(1500, [&] { return w.getLoop(P::melody) && w.getLoop(P::drums) && ! w.isAnalysing(P::melody) && ! w.isAnalysing(P::drums) && w.getPocketStatus(P::melody).active; });
+            check(back && w.getPocketStatus(P::melody).report.tripletNotes == 4, tag + "v2: a reopened session is locked again");
+            // closing while a lock is being made: no crash, no wait
+            {
+                EpsilonBounceProcessor x;
+                x.setPlayHead(&vh); x.setPlayConfigDetails(0, 2, sr, 256); x.prepareToPlay(sr, 256);
+                for (int i = 0; i < 4; ++i) { warm.clear(); x.processBlock(warm, noMidi); }
+                x.loadFile(mf, P::melody); x.loadFile(df, P::drums);
+                settle(300, [&] { return x.getPocketStatus(P::melody).busy && x.getLoop(P::drums) != nullptr && ! x.isAnalysing(P::drums); });
+            }
+            for (int i = 0; i < 20; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+            check(true, tag + "v2: closing the plugin mid-lock is safe");
+            df.deleteFile(); mf.deleteFile();
         }
 
         if (sr == 48000.0 && snapDir != juce::File())

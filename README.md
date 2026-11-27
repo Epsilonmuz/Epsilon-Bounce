@@ -13,6 +13,19 @@ Part of the Epsilon line by **Epsilon Sounds**.
 
 ![Epsilon Bounce](docs/epsilon-bounce-editor.png)
 
+## Pocket Engine (v2.0): in the pocket the way you hear it
+
+With both lanes loaded and one leading, Bounce 2.0 locks the other one with a new engine built from rhythm research (sources in [docs/POCKET-RESEARCH.md](docs/POCKET-RESEARCH.md)):
+
+| What used to go wrong | What 2.0 does |
+|---|---|
+| Drill / trap **triplet** figures were snapped to 16ths | Every beat is read as straight 16ths or 16th triplets (for the drums and the melody separately); triplet notes get the triplet hats' pocket |
+| **Pads and swells sounded late** even "on the beat" | **Heard timing**: each note's heard moment (half-way up its rise) is lined up with the drum hit's, so a 60 ms swell starts early and lands with the snare |
+| Moved notes left **gaps or looped tails** | **Warp**: the melody is time-stretched between its notes (pitch kept, attacks untouched), so it never stops sounding; drums still move hit by hit |
+| A hat + late snare flam pulled the pocket halfway | The loudest hit of a flam sets the pocket |
+
+**Lock** controls (Pocket panel): **Depth** 0-100 % (100 % = exactly the leader's feel, 0 % = dead on the grid, straight or triplet per beat; it stops at 100 % because listening tests find exaggerated microtiming sounds worse), **Heard timing** on/off, and **WARP / SLICES** (SLICES = the 1.x lock). The lock is made in the background (a quarter of a second for 2 bars); until it's ready the 1.x lock plays. Drag-out and sessions carry it.
+
 ## Tempo first: 1 Tempo -> 2 Pocket -> 3 Feel (v1.6)
 
 Bounce works in the order a producer would: **first the two loops are brought to one tempo**, then the pocket, then the feel.

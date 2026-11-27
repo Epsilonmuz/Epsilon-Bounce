@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.0.0 · "Pocket Engine" (2026-11-27)
+
+Built on 1.6.0. Plugin codes, existing parameter IDs and sessions are unchanged: 1.6 sessions open and lock with the new engine (switch **Lock engine** to SLICES to hear the 1.x lock).
+
+**Why 1.x didn't feel in the pocket, and what 2.0 does instead** (sources in `docs/POCKET-RESEARCH.md`)
+- **Triplets were destroyed.** The 1.x lock snapped every melody note to the nearest 16th before adding the drums' feel, so a drill / trap triplet figure moved by up to 40 ms. 2.0 reads every beat as straight 16ths *or* 16th-note triplets (12 ticks per beat), for the drums and the melody separately, and keeps the pocket per tick. Triplet notes get the triplet hats' pocket; straight notes get the straight one.
+- **Notes were lined up by where their waveform starts, not where you hear them.** A pad or a swelling sample is heard 20-40 ms after it starts (perceptual-centre research), so it sounded late even when it was "on the beat". 2.0 estimates each note's heard moment (where it reaches half its rise) and lines up heard moments, melody to drums. New **Heard timing** switch (on by default).
+- **Moved melody notes left gaps or looped tails.** 1.x re-triggered slices; 2.0 **warps** the melody between its notes (the phase vocoder from 1.6, each attack copied untouched, 3 ms joins that sum to unity), so every note lands in the pocket and the sound between them never stops. Drums following a melody still move hit by hit (they stay punchy).
+- **Notes are found with SuperFlux** (spectral flux on a log-frequency filterbank with a maximum filter: ignores vibrato and slides, catches a new note on a held chord), plus a slow 40 ms flux for pads and swells it would miss.
+- **A flam counts as its loudest hit.** A hat on the beat with the late snare 14 ms after it now gives the snare's pocket (1.x averaged them to 6 ms).
+- **Depth** (0-100 %): how much of the leader's pocket the follower takes. 0 % = dead on the grid (straight or triplet per beat). It stops at 100 %: listening tests find exaggerated microtiming lowers groove, while the original feel and a fully quantised version rate the same.
+- **Bar 1 check** (drums following drums): if a percussion loop's accents sit a beat or an 8th off the leader's, the footer says which Shift fixes it. It never moves anything by itself.
+- The lock is made in the background on its own thread (0.25 s for 2 bars, 3.7 s for 32 bars on the Linux bench) and re-made 150 ms after Depth, Heard timing, Sensitivity or either loop changes; the 1.x lock plays until it's ready, so there's never silence. Drag-out, sessions and Shift all carry the lock.
+- New **Lock** section in the Pocket panel: Depth, Heard timing, WARP / SLICES. Lane status shows HEARD / ONSET and how many notes are on triplets.
+- Fix: a background job that finished just as the plugin closed could post into the closed plugin (all callbacks are now guarded).
+
+**Tests**
+- New `BouncePocketTests` (34 checks): the drum pocket map (late snare 14 ms, swung hats 18 ms, triplet roll 10 ms read as triplets), the 1.x triplet bug reproduced (40 ms), SuperFlux finds every pluck within 1.5 ms and every pad, pads heard ~27 ms after they start, every locked note heard within 0.6 ms of the drums, triplets kept, Depth 0, warped audio: attacks within 2.5 ms of target, level within 0.7 dB, no clicks above 8 kHz, pitch kept, bar-1 finder, drums following, 32-bar timing.
+- 14 new host-bench checks per sample rate: both lanes load and lock through the real plugin, host playback within 2.2 ms of the lock over two loops, no gaps, drag-out, Depth re-lock, SLICES fallback, session reload, closing mid-lock. All 184 bench checks pass.
+
 ## 1.6.0 · "Tempo first" (2026-11-18)
 
 Built on 1.5.1. Plugin codes, parameter IDs and sessions are unchanged: 1.5 sessions open as before, and their loops' tempos are read once on load.

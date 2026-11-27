@@ -43,6 +43,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout EpsilonBounceProcessor::crea
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "link", 5 }, "Pocket", StringArray { "DRUMS LEAD", "MELODY LEADS", "GROOVE" }, 0));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "melLevel", 5 }, "Melody Level", NormalisableRange<float>(-60.0f, 6.0f, 0.1f, 2.5f), 0.0f, attr(level)));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "drumLevel", 5 }, "Drums Level", NormalisableRange<float>(-60.0f, 6.0f, 0.1f, 2.5f), 0.0f, attr(level)));
+    // v2.0: Pocket Engine
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID { "depth", 7 }, "Pocket Depth", NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f, attr(pct)));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "heard", 7 }, "Heard Timing", true));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "engine", 7 }, "Lock Engine", StringArray { "WARP", "SLICES" }, 0));
     return l;
 }
 
@@ -60,6 +64,7 @@ EpsilonBounceProcessor::EpsilonBounceProcessor()
     pMaterial = state.getRawParameterValue("material"); pChop = state.getRawParameterValue("chop"); pHold = state.getRawParameterValue("hold");
     pShift = state.getRawParameterValue("shift"); pAlign = state.getRawParameterValue("align");
     pLink = state.getRawParameterValue("link"); pMelLevel = state.getRawParameterValue("melLevel"); pDrumLevel = state.getRawParameterValue("drumLevel");
+    pDepth = state.getRawParameterValue("depth"); pHeard = state.getRawParameterValue("heard"); pEngine = state.getRawParameterValue("engine");
     for (auto& a : learnedAtoms) a.store(0.0f);
     for (auto& sl : slots) for (auto& a : sl.pocket) a.store(0.0f);
     startTimerHz(10);
@@ -68,7 +73,9 @@ EpsilonBounceProcessor::EpsilonBounceProcessor()
 EpsilonBounceProcessor::~EpsilonBounceProcessor()
 {
     stopTimer();
-    for (auto& s : slots) s.cancelAnalysis = true;   // a stretch or analysis in flight stops at its next check
+    alive->store(false);
+    for (auto& s : slots) { s.cancelAnalysis = true; s.cancelPocket = true; }   // runs in flight stop at their next check
+    pocketWorker.removeAllJobs(true, 4000);
     worker.removeAllJobs(true, 4000);
     encoder.removeAllJobs(true, 4000);
 }
@@ -158,7 +165,23 @@ int EpsilonBounceProcessor::leaderOf(int slot) const
 // Both loaded and one leads: the leader plays with its own timing untouched; the other is LOCKED to
 // the leader's pocket, the same lock Match drums applies (Tighten 100 % strips its old feel, the
 // leader's microtiming goes on at 100 %, nothing is added on top). Accent stays on its knob.
-bounce::GrooveSettings EpsilonBounceProcessor::grooveFor(int slot) const
+bounce::GrooveSettings EpsilonBounceProcessor::grooveFor(int slot) const { return grooveFor(slot, pocketActive(slot)); }
+
+bool EpsilonBounceProcessor::warpEngine() const { return juce::roundToInt(pEngine->load(std::memory_order_relaxed)) == 0; }
+
+// The v2.0 lock plays when this lane follows the other and its lock was made from the loops loaded now.
+// (While a new lock is being made, the 1.x lock plays: never silence, never the wrong audio.)
+bool EpsilonBounceProcessor::pocketActive(int slot) const
+{
+    const int leader = leaderOf(slot);
+    if (leader < 0 || ! warpEngine()) return false;
+    const auto& s = slots[(size_t) slot];
+    return s.pocketLive.load(std::memory_order_acquire) != nullptr
+        && s.pocketFollow.load(std::memory_order_relaxed) == s.serial.load(std::memory_order_relaxed)
+        && s.pocketLead.load(std::memory_order_relaxed) == slots[(size_t) leader].serial.load(std::memory_order_relaxed);
+}
+
+bounce::GrooveSettings EpsilonBounceProcessor::grooveFor(int slot, bool pocket) const
 {
     auto g = readGroove();
     if (slot == drums)
@@ -173,7 +196,17 @@ bounce::GrooveSettings EpsilonBounceProcessor::grooveFor(int slot) const
         return g;
     }
     const int leader = leaderOf(slot);
-    if (leader >= 0)
+    if (leader >= 0 && pocket)
+    {
+        // v2.0: the lock is already in the audio (and in its slices' places). Play it as it is; the leader's
+        // accents stay on the Accent knob, Shift still moves bar 1.
+        g.groove = bounce::Groove::learned;
+        g.learned = readPocket(leader);
+        for (auto& o : g.learned.offset) o = 0.0f;
+        g.amount = 0.0f; g.tighten = 0.0f; g.swing = 0.0f; g.humanizeMs = 0.0f; g.feelMs = 0.0f;
+        g.hold = false;                                  // the warp leaves no gaps to hold through
+    }
+    else if (leader >= 0)
     {
         g.groove = bounce::Groove::learned;
         g.learned = readPocket(leader);
@@ -283,13 +316,17 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
     // Take both loops for this block (a loop swapped mid-check sits the block out).
     const bounce::LoopData* loops[numSlots] {};
+    bool usePocket[numSlots] {};
     bool any = false;
     for (int i = 0; i < numSlots; ++i)
     {
         auto& sl = slots[(size_t) i];
-        const auto* l = sl.live.load(std::memory_order_acquire);
+        // the lane's v2.0 pocket lock when it follows, else its loop
+        usePocket[i] = pocketActive(i);
+        auto& src = usePocket[i] ? sl.pocketLive : sl.live;
+        const auto* l = src.load(std::memory_order_acquire);
         sl.inUse.store(l, std::memory_order_release);
-        if (sl.live.load(std::memory_order_acquire) != l) { sl.inUse.store(nullptr, std::memory_order_release); l = nullptr; }
+        if (src.load(std::memory_order_acquire) != l) { sl.inUse.store(nullptr, std::memory_order_release); l = nullptr; }
         if (l != nullptr && l->slices.empty()) l = nullptr;
         loops[i] = l;
         any |= l != nullptr;
@@ -345,7 +382,7 @@ void EpsilonBounceProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         auto& sl = slots[(size_t) i];
         const auto* loop = loops[i];
         if (loop == nullptr) { sl.playingSlice.store(-1, std::memory_order_relaxed); sl.lastLoop = nullptr; continue; }
-        const auto g = grooveFor(i);
+        const auto g = grooveFor(i, usePocket[i]);
         if (loop != sl.lastLoop || std::abs(bpm - sl.lastBpm) > 1e-6 || ! sameSettings(g, sl.lastSettings))
         {
             if (loop != sl.lastLoop) sl.player.reset();
@@ -425,6 +462,7 @@ void EpsilonBounceProcessor::clearSlot(int slot)
         s.dragCache.reset(); s.dragCacheKey.clear(); s.dragPendingKey.clear();
     }
     slots[(size_t) slot].cancelAnalysis = true;
+    slots[(size_t) slot].cancelPocket = true;
     publish(slot, nullptr);
 }
 
@@ -552,7 +590,7 @@ void EpsilonBounceProcessor::startAnalysis(int slot)
             for (const auto& sc : data1->slices) cuts.push_back(sc.onset);   // stretch pieces start on the attacks
             if (! bounce::stretchLoop(keepL, keepR, factor, sr, a.material, fl, fr, a.cancel, &cuts))
             {
-                juce::MessageManager::callAsync([this, slot] { slots[(size_t) slot].analysing = false; });
+                juce::MessageManager::callAsync([this, slot, token = alive] { if (token->load()) slots[(size_t) slot].analysing = false; });
                 return;                                         // out of date: the timer starts the next run
             }
             const juce::ScopedLock lock(loopLock);
@@ -567,8 +605,9 @@ void EpsilonBounceProcessor::startAnalysis(int slot)
 void EpsilonBounceProcessor::postAnalysis(int slot, int rawSerial, std::shared_ptr<bounce::LoopData> data, bool detect, bool switched, bounce::Material m,
                                           double src, float conf, bool stretched, double matched, double target, bool final)
 {
-        juce::MessageManager::callAsync([this, slot, rawSerial, data, detect, switched, m, src, conf, stretched, matched, target, final]
+        juce::MessageManager::callAsync([this, slot, rawSerial, data, detect, switched, m, src, conf, stretched, matched, target, final, token = alive]
         {
+            if (! token->load()) return;
             auto& sl = slots[(size_t) slot];
             bool current;
             { const juce::ScopedLock lock(loopLock); current = sl.rawSerial == rawSerial && ! sl.rawL.empty(); }
@@ -646,6 +685,97 @@ void EpsilonBounceProcessor::publish(int slot, std::shared_ptr<const bounce::Loo
     ++learnSerial;                                   // displays that show a pocket redraw
 }
 
+//==============================================================================
+// v2.0 Pocket Engine: the follower's lock is made on its own worker whenever what it depends on changes
+// (either loop, Depth, Heard timing, Sensitivity), 150 ms after the last change so a turning knob doesn't
+// queue up work. A run made out of date is stopped, not finished.
+juce::String EpsilonBounceProcessor::pocketKeyFor(int slot) const
+{
+    const int leader = leaderOf(slot);
+    if (leader < 0 || ! warpEngine()) return {};
+    juce::String k;
+    k << slots[(size_t) slot].serial.load() << "|" << slots[(size_t) leader].serial.load() << "|" << leader
+      << "|" << juce::roundToInt(pDepth->load()) << "|" << (pHeard->load() >= 0.5f ? 1 : 0) << "|" << juce::roundToInt(pSensitivity->load());
+    return k;
+}
+
+void EpsilonBounceProcessor::updatePocket(int slot)
+{
+    auto& s = slots[(size_t) slot];
+    const auto key = pocketKeyFor(slot);
+    if (key.isEmpty() || key == s.pocketKey) { s.wantKey.clear(); return; }
+    const auto now = juce::Time::getMillisecondCounter();
+    if (key != s.wantKey) { s.wantKey = key; s.wantSince = now; if (s.pocketing.load()) s.cancelPocket = true; return; }
+    if (now - s.wantSince < 150) return;
+    if (s.pocketing.load()) { s.cancelPocket = true; return; }       // starts at the next tick, once that run has stopped
+    const int leader = leaderOf(slot);
+    std::shared_ptr<const bounce::LoopData> f, l;
+    {
+        const juce::ScopedLock sl(loopLock);
+        f = s.current; l = slots[(size_t) leader].current;
+    }
+    if (f == nullptr || l == nullptr || f->slices.empty() || l->slices.empty()) return;
+    bounce::pocket::Settings st;
+    st.depth = juce::jlimit(0.0f, 1.0f, pDepth->load() * 0.01f);
+    st.perceived = pHeard->load() >= 0.5f;
+    st.sensitivity = juce::jlimit(0.0f, 1.0f, pSensitivity->load() * 0.01f);
+    const int fSer = s.serial.load(), lSer = slots[(size_t) leader].serial.load();
+    s.pocketKey = key;
+    s.wantKey.clear();
+    s.cancelPocket = false;
+    s.pocketing = true;
+    pocketWorker.addJob([this, slot, f, l, st, key, fSer, lSer, leader, token = alive]
+    {
+        bounce::pocket::Report rep;
+        std::shared_ptr<const bounce::LoopData> out = bounce::pocket::lockToPocket(*f, *l, st, &rep, &slots[(size_t) slot].cancelPocket);
+        juce::MessageManager::callAsync([this, slot, out, rep, key, fSer, lSer, leader, token]
+        {
+            if (! token->load()) return;                               // the plugin closed meanwhile
+            auto& s2 = slots[(size_t) slot];
+            s2.pocketing = false;
+            if (key != s2.pocketKey) return;                          // out of date: the timer starts the next one
+            if (out == nullptr) { s2.pocketKey.clear(); return; }      // stopped: try again
+            {
+                const juce::ScopedLock sl(loopLock);
+                if (s2.pocketCurrent) s2.retired.push_back(s2.pocketCurrent);
+                s2.pocketCurrent = out;
+                s2.pocketReport = rep;
+            }
+            s2.pocketLive.store(out.get(), std::memory_order_release);  // the pointer first: until the serials
+            s2.pocketFollow.store(fSer, std::memory_order_relaxed);    // match, the 1.x lock keeps playing
+            s2.pocketLead.store(lSer, std::memory_order_relaxed);
+            ++s2.pocketSerial;
+            const juce::String who = slot == melody ? "Melody" : "Drums", to = leader == drums ? "the drums" : "the melody";
+            loadNote = who + " locked to " + to + ": " + juce::String(rep.notes) + (slot == melody ? " notes" : " hits")
+                     + (pHeard->load() >= 0.5f ? " by heard timing" : " by onset")
+                     + (rep.tripletNotes > 0 ? ", " + juce::String(rep.tripletNotes) + " on triplets" : juce::String())
+                     + ", moved " + juce::String(rep.meanMoveMs, 1) + " ms on average";
+            if (rep.barOne.shift16 != 0)
+                loadNote << " - bar 1 looks " << std::abs(rep.barOne.shift16) << "/16 " << (rep.barOne.shift16 > 0 ? "early" : "late")
+                         << ": try Shift " << (rep.barOne.shift16 > 0 ? "+" : "") << rep.barOne.shift16;
+            ++noteSerial;
+        });
+    });
+}
+
+EpsilonBounceProcessor::PocketStatus EpsilonBounceProcessor::getPocketStatus(int slot) const
+{
+    PocketStatus st;
+    st.active = pocketActive(slot);
+    st.busy = slots[(size_t) slot].pocketing.load() || (! st.active && leaderOf(slot) >= 0 && warpEngine());
+    const juce::ScopedLock sl(loopLock);
+    st.report = slots[(size_t) slot].pocketReport;
+    return st;
+}
+
+std::shared_ptr<const bounce::LoopData> EpsilonBounceProcessor::getPlayedLoop(int slot) const
+{
+    slot = juce::jlimit(0, numSlots - 1, slot);
+    const bool p = pocketActive(slot);
+    const juce::ScopedLock sl(loopLock);
+    return p && slots[(size_t) slot].pocketCurrent ? slots[(size_t) slot].pocketCurrent : slots[(size_t) slot].current;
+}
+
 std::shared_ptr<const bounce::LoopData> EpsilonBounceProcessor::getLoop(int slot) const
 {
     const juce::ScopedLock sl(loopLock);
@@ -662,6 +792,7 @@ void EpsilonBounceProcessor::timerCallback()
             const auto* busy = s.inUse.load(std::memory_order_acquire);
             s.retired.erase(std::remove_if(s.retired.begin(), s.retired.end(), [busy](const auto& p) { return p.get() != busy; }), s.retired.end());
         }
+        updatePocket(i);
         // A loop that arrived before the host said its tempo (sync off, or an old session) takes the
         // project tempo once, the first time it is known. After that it never changes.
         if (s.madeAtBpm.load(std::memory_order_relaxed) <= 0.0 && analysisTempoHint() > 0.0)
@@ -704,7 +835,7 @@ juce::String EpsilonBounceProcessor::dragKey(int loops, int slot) const
 {
     const auto g = grooveFor(slot);
     juce::String k;
-    k << slot << "|" << getLoopSerial(slot) << "|" << loops << "|" << (int) g.groove << "|" << g.amount << "|" << g.swing << "|" << g.tighten << "|" << g.humanizeMs
+    k << slot << "|" << getPlaySerial(slot) << "|" << (int) pocketActive(slot) << "|" << loops << "|" << (int) g.groove << "|" << g.amount << "|" << g.swing << "|" << g.tighten << "|" << g.humanizeMs
       << "|" << g.accent << "|" << g.feelMs << "|" << g.shiftSteps << "|" << (int) g.hold << "|" << (int) g.softCuts << "|" << gridBpm()
       << "|" << pOutput->load() << "|" << rate << "|" << learnSerial.load() << "|" << (int) link() << "|" << leaderOf(slot) << "|" << (int) leads(slot);
     return k;
@@ -744,7 +875,7 @@ void EpsilonBounceProcessor::prepareDragOut(int loops, int slot)
         if (s.dragCacheKey == key || s.dragPendingKey == key) return;
         s.dragPendingKey = key;
     }
-    auto loop = getLoop(slot);
+    auto loop = getPlayedLoop(slot);
     const auto g = grooveFor(slot);
     const double bpm = gridBpm(), outRate = rate > 0 ? rate : 44100.0;
     const float gain = juce::Decibels::decibelsToGain(pOutput->load());
@@ -761,7 +892,7 @@ juce::File EpsilonBounceProcessor::renderToFile(int loops, int slot)
 {
     slot = juce::jlimit(0, numSlots - 1, slot);
     auto& s = slots[(size_t) slot];
-    auto loop = getLoop(slot);
+    auto loop = getPlayedLoop(slot);
     if (! loop || loop->slices.empty()) return {};
     const auto key = dragKey(loops, slot);
     const auto groove = grooveFor(slot);
@@ -872,8 +1003,9 @@ juce::String EpsilonBounceProcessor::learnFromFile(const juce::File& file)
         }
         auto ref = bounce::analyse(std::move(l), std::move(r), sr, a);
         const auto res = bounce::learnGroove(*ref);
-        juce::MessageManager::callAsync([this, res, name, bpm = ref->bpm]
+        juce::MessageManager::callAsync([this, res, name, bpm = ref->bpm, token = alive]
         {
+            if (! token->load()) return;
             LearnInfo info { name, res.hits, res.stepsHeard, res.swingPercent, res.hits >= 4, res.heard };
             if (info.valid)
             {
