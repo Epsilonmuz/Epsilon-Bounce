@@ -107,6 +107,12 @@ private:
     GrooveGrid grid { proc, EpsilonBounceProcessor::melody }, drumGrid { proc, EpsilonBounceProcessor::drums };
     TempoStrip melTempo { proc, EpsilonBounceProcessor::melody, look.colours() }, drumTempo { proc, EpsilonBounceProcessor::drums, look.colours() };
     epsilon_ui::ModeSwitch grooveSwitch { proc.state, "groove" };
+    // v2.0 Pocket Engine: how the follower is locked to the leader
+    epsilon_ui::Knob depth { proc.state, "depth", "Depth" };
+    juce::TextButton heardButton { "Heard timing" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> heardAttachment;
+    epsilon_ui::ModeSwitch engineSwitch { proc.state, "engine" };
+    juce::Rectangle<int> lockLabel;
     epsilon_ui::ModeSwitch timeSwitch { proc.state, "time" };
     epsilon_ui::ModeSwitch materialSwitch { proc.state, "material" };
     epsilon_ui::ModeSwitch chopSwitch { proc.state, "chop" };

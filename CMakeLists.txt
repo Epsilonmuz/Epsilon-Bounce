@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(EpsilonBounce VERSION 1.6.0 LANGUAGES C CXX)
+project(EpsilonBounce VERSION 2.0.0 LANGUAGES C CXX)
 
 # macOS: 12.0 target and JUCE 9.0.5 (bundled in ./JUCE in the Projucer package; CI clones it).
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
@@ -71,6 +71,10 @@ if(BOUNCE_BUILD_TESTS)
     target_include_directories(BounceTempoTests PRIVATE Source)
     target_compile_features(BounceTempoTests PRIVATE cxx_std_17)
     add_test(NAME BounceTempoTests COMMAND BounceTempoTests)
+    add_executable(BouncePocketTests Tests/PocketTests.cpp)        # v2.0 pocket engine: lattice, heard timing, warp
+    target_include_directories(BouncePocketTests PRIVATE Source)
+    target_compile_features(BouncePocketTests PRIVATE cxx_std_17)
+    add_test(NAME BouncePocketTests COMMAND BouncePocketTests)
 endif()
 
 # Headless host test + editor snapshot. Off by default:

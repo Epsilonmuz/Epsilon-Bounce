@@ -22,7 +22,7 @@ void GrooveGrid::filesDropped(const juce::StringArray& files, int, int)
 
 void GrooveGrid::refresh(bool force)
 {
-    const auto serial = proc.getLoopSerial(slot);
+    const auto serial = proc.getPlaySerial(slot);   // its v2.0 lock when it follows (the audio you hear)
     const auto g = proc.grooveFor(slot);
     const auto bpm = proc.gridBpm();
     const auto playing = proc.getPlayingSlice(slot);
@@ -32,7 +32,7 @@ void GrooveGrid::refresh(bool force)
     const bool changed = leader != lastLeader || lead != lastLeads || g.shiftSteps != lastG.shiftSteps || ! (g.learned == lastG.learned) || learnSerial != lastLearn || serial != lastSerial || g.groove != lastG.groove || g.amount != lastG.amount || g.swing != lastG.swing
                       || g.tighten != lastG.tighten || g.humanizeMs != lastG.humanizeMs || g.accent != lastG.accent
                       || g.feelMs != lastG.feelMs || std::abs(bpm - lastBpm) > 0.01;
-    if (serial != lastSerial) { loop = proc.getLoop(slot); cache = {}; }
+    if (serial != lastSerial) { loop = proc.getPlayedLoop(slot); cache = {}; }
     if (changed || force)
     {
         places.clear();
@@ -179,6 +179,12 @@ void GrooveGrid::paint(juce::Graphics& g)
                     g.fillPath(tri);
                 }
         status = (leader == EpsilonBounceProcessor::melody ? "LOCKED TO MELODY: " : "LOCKED TO DRUMS: ") + info.name + dotSep + juce::String(juce::roundToInt(info.swingPercent)) + " % swing";
+        const auto ps = proc.getPocketStatus(slot);
+        if (ps.active)
+            status << dotSep << (proc.state.getRawParameterValue("heard")->load() >= 0.5f ? "HEARD" : "ONSET")
+                   << (ps.report.tripletNotes > 0 ? dotSep + juce::String(ps.report.tripletNotes) + " TRIPLETS" : juce::String());
+        else if (ps.busy && proc.warpEngine())
+            status << dotSep << "LOCKING...";
     }
     else
         status = "GROOVE: " + juce::String(bounce::grooveName(gs.groove)).toUpperCase();
@@ -423,6 +429,16 @@ EpsilonBounceEditor::EpsilonBounceEditor(EpsilonBounceProcessor& p) : AudioProce
     addAndMakeVisible(melTempo);
     addAndMakeVisible(drumTempo);
     learnButton.onFileDropped = [this](const juce::File& f) { load(f, EpsilonBounceProcessor::drums); };
+    depth.setTooltip("How much of the leader's pocket the follower takes. 100 %: exactly its feel. 0 %: dead on the grid "
+                     "(straight or triplet, whichever each beat is). Research: more than the original feel sounds worse, so it stops at 100 %.");
+    heardButton.setClickingTogglesState(true);
+    heardButton.getProperties().set("pill", true);
+    heardButton.setTooltip("Line notes up where you HEAR them, not where their waveform starts. A pad or swell is heard 20-40 ms after "
+                           "it starts, so it is moved earlier to land with the drums. Off: line up raw onsets (1.x).");
+    heardAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.state, "heard", heardButton);
+    engineSwitch.setTooltip("WARP (2.0): the melody is time-warped between its notes so every note lands in the pocket and the sound never "
+                            "stops; drums move hit by hit. Triplets stay triplets. SLICES: the 1.x lock (re-triggered slices on 16ths).");
+    for (juce::Component* c : { static_cast<juce::Component*>(&depth), static_cast<juce::Component*>(&heardButton), static_cast<juce::Component*>(&engineSwitch) }) addAndMakeVisible(c);
     grooveSwitch.setRows(3);
     grooveSwitch.setTooltip("The pocket both lanes ride when Pocket is on GROOVE, or when only one lane is loaded. Dimmed while one lane leads the other.");
     addAndMakeVisible(grooveSwitch);
@@ -500,6 +516,11 @@ void EpsilonBounceEditor::timerCallback()
         if (grooveSwitch.getAlpha() != ga) grooveSwitch.setAlpha(ga);
         // ...and the lock replaces these (Tighten 100 %, the leader's feel at 100 %, nothing added). Accent still works.
         for (auto* k : { &amount, &swing, &tighten, &humanize, &feel }) if (k->getAlpha() != ga) k->setAlpha(ga);
+        // the lock controls work only while one lane follows the other (and Depth / Heard only with WARP)
+        const bool locking = both && proc.link() != EpsilonBounceProcessor::Link::groove;
+        const float la = locking ? 1.0f : 0.4f, wa = locking && proc.warpEngine() ? 1.0f : 0.4f;
+        if (engineSwitch.getAlpha() != la) engineSwitch.setAlpha(la);
+        for (juce::Component* c : { static_cast<juce::Component*>(&depth), static_cast<juce::Component*>(&heardButton) }) if (c->getAlpha() != wa) c->setAlpha(wa);
     }
     tempo.setEnabled(! syncButton.getToggleState() || ! proc.hostIsPlaying());
     const int cur = proc.getCurrentPreset();
@@ -538,6 +559,7 @@ void EpsilonBounceEditor::paint(juce::Graphics& g)
     drawSectionLabel(g, { (float) chopLabel.getX(), (float) chopLabel.getCentreY() }, "Grid chop", pal);
     drawSectionLabel(g, { (float) cutLabel.getX() + 4.0f, (float) cutLabel.getCentreY() }, "Cut on", pal);
     drawSectionLabel(g, { (float) timeSwitch.getX(), (float) timeSwitch.getY() - 11.0f }, "Time", pal);
+    drawSectionLabel(g, { (float) lockLabel.getX(), (float) lockLabel.getCentreY() }, "Lock", pal);
 
     // what the learned groove is, under the Learn button
     const auto info = proc.getLearnInfo();
@@ -590,7 +612,19 @@ void EpsilonBounceEditor::resized()
     linkSwitch.setBounds(titleRow.removeFromLeft(juce::jmin(330, titleRow.getWidth() - 8)).withTrimmedTop(2));
     h.removeFromTop(4);
     auto sliceRow = h.removeFromBottom(112);
-    grooveSwitch.setBounds(h.removeFromBottom(108));
+    {
+        auto row = h.removeFromBottom(108);
+        auto lock = row.removeFromLeft(212);
+        row.removeFromLeft(size::space3);
+        grooveSwitch.setBounds(row);
+        lockLabel = lock.removeFromTop(14);
+        depth.setBounds(lock.removeFromLeft(78));
+        lock.removeFromLeft(size::space2);
+        lock.removeFromTop(8);
+        heardButton.setBounds(lock.removeFromTop(26));
+        lock.removeFromTop(size::space2 + 4);
+        engineSwitch.setBounds(lock.removeFromTop(28));
+    }
     h.removeFromBottom(size::space3);
     // two lanes, each with its own Drag out / Level / Clear column
     const int laneH = (h.getHeight() - size::space2) / 2;

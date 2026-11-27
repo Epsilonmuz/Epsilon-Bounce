@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include "BounceEngine.h"
 #include "TempoMatch.h"
+#include "PocketEngine.h"
 #include "Presets.h"
 
 class EpsilonBounceProcessor : public juce::AudioProcessor, private juce::Timer
@@ -44,6 +45,14 @@ public:
     juce::String getLoopName(int slot = melody) const { const juce::ScopedLock sl(loopLock); return slots[(size_t) slot].name; }
     bounce::GrooveSettings currentGroove() const;           // the melody lane's groove
     bounce::GrooveSettings grooveFor(int slot) const;       // what this lane actually plays with (link resolved)
+    std::shared_ptr<const bounce::LoopData> getPlayedLoop(int slot) const;   // what this lane plays: its pocket lock (2.0) or its loop
+    int getPlaySerial(int slot) const { return slots[(size_t) slot].serial.load() * 4096 + slots[(size_t) slot].pocketSerial.load(); }
+
+    // Pocket Engine (v2.0): the follower is locked to the leader by heard timing, on a straight / triplet
+    // lattice, and (melodies) warped so the sound between notes never stops. See PocketEngine.h.
+    struct PocketStatus { bool active = false, busy = false; bounce::pocket::Report report; };
+    PocketStatus getPocketStatus(int slot) const;
+    bool warpEngine() const;                                // ENGINE = WARP 2.0 (else the 1.x slice lock)
     double playbackBpm() const;                             // host tempo if known, else internal tempo
     bool isAnalysing(int slot = melody) const { return slots[(size_t) slot].analysing.load() || slots[(size_t) slot].restartPending.load(); }
     int getPlayingSlice(int slot = melody) const { return slots[(size_t) slot].playingSlice.load(std::memory_order_relaxed); }
@@ -136,6 +145,14 @@ private:
         std::array<std::atomic<float>, bounce::stepsPerBar * 2> pocket {};
         std::atomic<bool> pocketValid { false };
         LearnInfo pocketInfo;                                 // guarded by loopLock
+        // v2.0 pocket lock of this lane to the other (read by the audio thread like `live`)
+        std::atomic<const bounce::LoopData*> pocketLive { nullptr };
+        std::shared_ptr<const bounce::LoopData> pocketCurrent;    // guarded by loopLock
+        std::atomic<int> pocketFollow { -1 }, pocketLead { -1 }, pocketSerial { 0 };   // the serials it was made from
+        std::atomic<bool> pocketing { false }, cancelPocket { false };
+        juce::String pocketKey, wantKey;                      // message thread: last started / wanted job
+        juce::uint32 wantSince = 0;
+        bounce::pocket::Report pocketReport;                  // guarded by loopLock
         // audio thread
         bounce::Player player;
         bounce::GrooveSettings lastSettings {};
@@ -149,6 +166,13 @@ private:
     static juce::MemoryBlock encodeFlac(const std::vector<float>& l, const std::vector<float>& r, double sr);
     juce::ThreadPool worker { 1 };
     juce::ThreadPool encoder { 1 };                          // session FLAC, in parallel with the analysis
+    juce::ThreadPool pocketWorker { 1 };                     // v2.0 pocket locks, apart from the analysis
+    // set false in the destructor: a lock that finishes as the plugin closes must not post into a dead processor
+    std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>>(true);
+    bool pocketActive(int slot) const;                       // this lane plays its v2.0 pocket lock right now
+    bounce::GrooveSettings grooveFor(int slot, bool pocket) const;
+    juce::String pocketKeyFor(int slot) const;
+    void updatePocket(int slot);                             // timer: (re)start the lock when its inputs change
     juce::String sliceKey(int slot) const;
     bounce::GrooveTemplate readPocket(int slot) const;
     int currentPreset = -1;
@@ -179,6 +203,7 @@ private:
     std::atomic<float>* pTime; std::atomic<float>* pMaterial; std::atomic<float>* pChop; std::atomic<float>* pHold;
     std::atomic<float>* pShift; std::atomic<float>* pAlign;
     std::atomic<float>* pLink; std::atomic<float>* pMelLevel; std::atomic<float>* pDrumLevel;
+    std::atomic<float>* pDepth; std::atomic<float>* pHeard; std::atomic<float>* pEngine;
 
     void setRawAudio(int slot, std::vector<float> l, std::vector<float> r, double sr, const juce::String& name, double madeAtBpm = -1.0,
                      double knownSrcBpm = 0.0, double srcOverride = 0.0, int fitMode = 0);

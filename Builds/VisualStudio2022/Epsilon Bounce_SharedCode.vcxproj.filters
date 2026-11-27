@@ -4890,6 +4890,12 @@
     <ClInclude Include="..\..\Source\BounceEngine.h">
       <Filter>Epsilon Bounce\Source</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\Source\TempoMatch.h">
+      <Filter>Epsilon Bounce\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Source\PocketEngine.h">
+      <Filter>Epsilon Bounce\Source</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\Source\Presets.h">
       <Filter>Epsilon Bounce\Source</Filter>
     </ClInclude>
